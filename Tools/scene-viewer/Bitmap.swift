@@ -44,3 +44,17 @@ func writeBitmap(_ image: ImageBuffer, to path: String) -> Bool {
     defer { fclose(file) }
     return data.withUnsafeBytes { fwrite($0.baseAddress, 1, $0.count, file) } == data.count
 }
+
+/// A file's bytes.
+func readFile(_ path: String) -> [UInt8]? {
+    guard let file = fopen(path, "rb") else { return nil }
+    defer { fclose(file) }
+    var bytes: [UInt8] = []
+    var buffer = [UInt8](repeating: 0, count: 1 << 16)
+    while true {
+        let count = fread(&buffer, 1, buffer.count, file)
+        guard count > 0 else { break }
+        bytes += buffer[0..<count]
+    }
+    return bytes
+}
