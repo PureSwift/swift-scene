@@ -125,6 +125,19 @@ public extension MetafileObjectType {
     static let triangle = MetafileObjectType("trng")
     static let polygon = MetafileObjectType("plyg")
     static let box = MetafileObjectType("box ")
+    static let ellipsoid = MetafileObjectType("elpd")
+    static let cone = MetafileObjectType("cone")
+    static let cylinder = MetafileObjectType("cyln")
+    static let disk = MetafileObjectType("disk")
+    static let torus = MetafileObjectType("tors")
+    static let caps = MetafileObjectType("caps")
+    static let topCapAttributeSet = MetafileObjectType("tcas")
+    static let bottomCapAttributeSet = MetafileObjectType("bcas")
+    static let faceCapAttributeSet = MetafileObjectType("fcas")
+    static let interiorCapAttributeSet = MetafileObjectType("icas")
+
+    // Styles
+    static let subdivisionStyle = MetafileObjectType("sbdv")
     static let attributeArray = MetafileObjectType("atar")
 
     // Transforms
@@ -169,7 +182,11 @@ public extension MetafileObjectType {
         ("Group", .group), ("DisplayGroup", .displayGroup), ("OrderedDisplayGroup", .orderedDisplayGroup),
         ("IOProxyDisplayGroup", .ioProxyDisplayGroup), ("LightGroup", .lightGroup), ("InfoGroup", .infoGroup),
         ("DisplayGroupState", .displayGroupState), ("DisplayGroupBBox", .displayGroupBoundingBox),
-        ("TriMesh", .triMesh), ("Triangle", .triangle), ("Polygon", .polygon), ("Box", .box), ("AttributeArray", .attributeArray),
+        ("TriMesh", .triMesh), ("Triangle", .triangle), ("Polygon", .polygon), ("Box", .box),
+        ("Ellipsoid", .ellipsoid), ("Cone", .cone), ("Cylinder", .cylinder), ("Disk", .disk), ("Torus", .torus),
+        ("Caps", .caps), ("TopCapAttributeSet", .topCapAttributeSet), ("BottomCapAttributeSet", .bottomCapAttributeSet),
+        ("FaceCapAttributeSet", .faceCapAttributeSet), ("InteriorCapAttributeSet", .interiorCapAttributeSet),
+        ("SubdivisionStyle", .subdivisionStyle), ("AttributeArray", .attributeArray),
         ("Matrix", .matrixTransform), ("Scale", .scaleTransform), ("Translate", .translateTransform),
         ("Rotate", .rotateTransform), ("RotateAboutPoint", .rotateAboutPointTransform),
         ("RotateAboutAxis", .rotateAboutAxisTransform), ("Quaternion", .quaternionTransform), ("Reset", .resetTransform),
