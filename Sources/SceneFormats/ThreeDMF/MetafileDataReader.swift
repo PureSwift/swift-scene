@@ -72,7 +72,8 @@ struct MetafileDataReader {
         case .binary(let bytes, let order):
             return Float(bitPattern: try fixedWidth(bytes, order, 4))
         case .text(let tokens):
-            let token = try nextToken(tokens)
+            // Some writers separate numbers with commas, which Quesa's scanf-style reading stops at.
+            let token = Self.number(try nextToken(tokens))
             if let value = Float(token) { return value }
             // Some writers spell integers in hexadecimal, and some floats with a trailing f.
             if let value = Self.parseInteger(token) { return Float(value) }
@@ -186,11 +187,18 @@ struct MetafileDataReader {
 
     private mutating func integer() throws(SceneFormatError) -> Int64 {
         guard case .text(let tokens) = data else { preconditionFailure("Text only") }
-        let token = try nextToken(tokens)
+        let token = Self.number(try nextToken(tokens))
         if let value = Self.parseInteger(token) { return value }
         // A float where an integer belongs, as some writers put them.
         if let value = Float(token), value.isFinite { return Int64(value) }
         throw .malformed("\"\(token)\" is not an integer", offset: nil)
+    }
+
+    /// A number's token without the commas some writers put after it.
+    private static func number(_ token: String) -> String {
+        var trimmed = Substring(token)
+        while trimmed.hasSuffix(",") { trimmed = trimmed.dropLast() }
+        return String(trimmed)
     }
 
     static func parseInteger(_ token: String) -> Int64? {
