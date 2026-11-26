@@ -83,8 +83,9 @@ struct QuesaModelTests {
             }
         }
         #expect(failures.isEmpty, Comment(rawValue: "\(failures.count) of \(paths.count) failed:\n" + failures.joined(separator: "\n")))
-        // Every sample with a TriMesh, Triangle, Polygon or Box: 31 at Quesa's a7dccbff. The curved surfaces come later.
-        #expect(withGeometry >= 31)
+        // Every sample with a TriMesh, Triangle, Polygon, Box, Ellipsoid, Cone, Cylinder, Disk or Torus: 104 at Quesa's
+        // a7dccbff. Meshes, general polygons and NURBS come later.
+        #expect(withGeometry >= 104)
         print("Decoded geometry from \(withGeometry) of \(paths.count) sample models")
     }
 }

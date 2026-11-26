@@ -21,12 +21,14 @@ import SDL3Swift
 //   --es               OpenGL ES 3.0 instead of OpenGL 3.3 Core
 //   --frames <n>       quit after n frames
 //   --snapshot <path>  draw one frame, save it as a bitmap, and quit
+//   --view <yaw> <pitch>  the camera's angles round and above the target, in degrees
 
 struct Options {
     var profile = SDLRenderBackend.Profile.core
     var frameLimit: Int?
     var snapshotPath: String?
     var file: String?
+    var view: (yaw: Float, pitch: Float)?
 
     init(_ arguments: [String]) {
         var arguments = arguments.makeIterator()
@@ -35,6 +37,10 @@ struct Options {
             case "--es": profile = .es
             case "--frames": frameLimit = arguments.next().flatMap { Int($0) }
             case "--snapshot": snapshotPath = arguments.next()
+            case "--view":
+                if let yaw = arguments.next().flatMap(Float.init), let pitch = arguments.next().flatMap(Float.init) {
+                    view = (yaw, pitch)
+                }
             case let path where !path.hasPrefix("--"): file = path
             default: print("scene-viewer: ignoring \(argument)")
             }
@@ -143,6 +149,10 @@ func run() throws {
     let cameraNode = scene.rootNode.childNode(named: "camera")!
     let initialOrbit = options.file == nil ? OrbitCamera(target: [0.6, 0.4, 0]) : framing(scene)
     var orbit = initialOrbit
+    if let view = options.view {
+        orbit.yaw = radians(degrees: view.yaw)
+        orbit.pitch = radians(degrees: view.pitch)
+    }
     orbit.apply(to: cameraNode)
     let clear = SIMD4<Float>(0.05, 0.06, 0.08, 1)
 

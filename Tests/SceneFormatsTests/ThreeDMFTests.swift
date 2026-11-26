@@ -261,3 +261,42 @@ private func binaryFixture(_ order: Metafile3D.ByteOrder) -> [UInt8] {
         #expect(Pixmap.convert([0x7C, 0x00], width: 1, height: 1, rowBytes: 2, type: .argb16, littleEndian: false).pixels == [255, 0, 0, 0])
     }
 }
+
+@Suite struct ThreeDMFQuadricTests {
+
+    private let text = """
+    3DMetafile ( 1 6 Normal )
+    SubdivisionStyle ( Constant 24 12 )
+    Container (
+        Cone ( 0 4 0  0 0 1  3 0 0  0 -2 0  0.85 0.15 0 0.6 )
+        Caps ( Bottom | Interior )
+        Container ( BottomCapAttributeSet ( ) Container ( AttributeSet ( ) DiffuseColor ( 1 0 0 ) ) )
+        Container ( InteriorCapAttributeSet ( ) Container ( AttributeSet ( ) DiffuseColor ( 1 1 0 ) ) )
+        Container ( AttributeSet ( ) DiffuseColor ( 0 1 1 ) )
+    )
+    Ellipsoid ( )
+    """
+
+    @Test func decodesCapsAndTheirAttributes() throws {
+        let scene = try ThreeDMFDecoder(isStrict: true).decodeScene(Array(text.utf8))
+        let cone = try #require(scene.rootNode.children.first?.geometry)
+        let mesh = cone.mesh
+        #expect(mesh.submeshes.count == 4)
+        #expect(!mesh.submeshes[QuadricSurface.Part.bottomCap.rawValue].range.isEmpty)
+        #expect(mesh.submeshes[QuadricSurface.Part.topCap.rawValue].range.isEmpty)
+        // The face takes the geometry's colour; each cap its own.
+        #expect(cone.material(forSubmesh: 0).diffuse.color == SIMD4(0, 1, 1, 1))
+        #expect(cone.material(forSubmesh: 2).diffuse.color == SIMD4(1, 0, 0, 1))
+        #expect(cone.material(forSubmesh: 3).diffuse.color == SIMD4(1, 1, 0, 1))
+        // 24 segments round, from the subdivision style.
+        #expect(mesh.triangles(in: mesh.submeshes[2]).count == 24)
+    }
+
+    @Test func defaultEllipsoidIsQuickDraw3Ds() throws {
+        let scene = try ThreeDMFDecoder(isStrict: true).decodeScene(Array(text.utf8))
+        let ellipsoid = try #require(scene.rootNode.children.last?.geometry)
+        // Orientation x, radii y and z: a unit sphere.
+        let bounds = ellipsoid.mesh.bounds
+        #expect(abs(bounds.max.x - 1) < 1e-5 && abs(bounds.min.x + 1) < 1e-5)
+    }
+}
