@@ -125,6 +125,20 @@ public extension MetafileObjectType {
     static let triangle = MetafileObjectType("trng")
     static let polygon = MetafileObjectType("plyg")
     static let box = MetafileObjectType("box ")
+    static let generalPolygon = MetafileObjectType("gpgn")
+    static let mesh = MetafileObjectType("mesh")
+    static let triGrid = MetafileObjectType("trig")
+    static let nurbCurve = MetafileObjectType("nrbc")
+    static let nurbPatch = MetafileObjectType("nrbp")
+    static let line = MetafileObjectType("line")
+    static let polyLine = MetafileObjectType("plyl")
+    static let ellipse = MetafileObjectType("elps")
+    static let generalPolygonHint = MetafileObjectType("gplh")
+    static let meshCorners = MetafileObjectType("crnr")
+    static let meshEdges = MetafileObjectType("edge")
+    static let faceAttributeSetList = MetafileObjectType("fasl")
+    static let vertexAttributeSetList = MetafileObjectType("vasl")
+    static let geometryAttributeSetList = MetafileObjectType("gasl")
     static let ellipsoid = MetafileObjectType("elpd")
     static let cone = MetafileObjectType("cone")
     static let cylinder = MetafileObjectType("cyln")
@@ -183,6 +197,10 @@ public extension MetafileObjectType {
         ("IOProxyDisplayGroup", .ioProxyDisplayGroup), ("LightGroup", .lightGroup), ("InfoGroup", .infoGroup),
         ("DisplayGroupState", .displayGroupState), ("DisplayGroupBBox", .displayGroupBoundingBox),
         ("TriMesh", .triMesh), ("Triangle", .triangle), ("Polygon", .polygon), ("Box", .box),
+        ("GeneralPolygon", .generalPolygon), ("Mesh", .mesh), ("TriGrid", .triGrid), ("NURBCurve", .nurbCurve),
+        ("NURBPatch", .nurbPatch), ("Line", .line), ("PolyLine", .polyLine), ("Ellipse", .ellipse), ("GeneralPolygonHint", .generalPolygonHint),
+        ("MeshCorners", .meshCorners), ("MeshEdges", .meshEdges), ("FaceAttributeSetList", .faceAttributeSetList),
+        ("VertexAttributeSetList", .vertexAttributeSetList), ("GeometryAttributeSetList", .geometryAttributeSetList),
         ("Ellipsoid", .ellipsoid), ("Cone", .cone), ("Cylinder", .cylinder), ("Disk", .disk), ("Torus", .torus),
         ("Caps", .caps), ("TopCapAttributeSet", .topCapAttributeSet), ("BottomCapAttributeSet", .bottomCapAttributeSet),
         ("FaceCapAttributeSet", .faceCapAttributeSet), ("InteriorCapAttributeSet", .interiorCapAttributeSet),
