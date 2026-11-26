@@ -83,9 +83,9 @@ struct QuesaModelTests {
             }
         }
         #expect(failures.isEmpty, Comment(rawValue: "\(failures.count) of \(paths.count) failed:\n" + failures.joined(separator: "\n")))
-        // Every sample with a TriMesh, Triangle, Polygon, Box, Ellipsoid, Cone, Cylinder, Disk or Torus: 104 at Quesa's
-        // a7dccbff. Meshes, general polygons and NURBS come later.
-        #expect(withGeometry >= 104)
+        // Every sample with geometry that isn't deliberately degenerate (the GeoWarn and TopoErr ones), a marker or a
+        // point: 155 at Quesa's a7dccbff.
+        #expect(withGeometry >= 155)
         print("Decoded geometry from \(withGeometry) of \(paths.count) sample models")
     }
 }

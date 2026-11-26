@@ -9,8 +9,9 @@ import SceneGraph
 ///
 /// The objects are submitted in order as QuickDraw 3D would draw them: transforms, attribute sets and shaders
 /// change the state for what follows in the same group; each group is a node, its state its own; each geometry
-/// is a node placed by the transforms before it. Geometry is TriMesh, Triangle, Polygon, Box and the quadrics
-/// (Ellipsoid, Cone, Cylinder, Disk, Torus) so far; other objects are skipped.
+/// is a node placed by the transforms before it. Geometry is TriMesh, Triangle, Polygon, GeneralPolygon, Mesh,
+/// TriGrid, Box, the quadrics (Ellipsoid, Cone, Cylinder, Disk, Torus), NURB patches and curves, Line, PolyLine and Ellipse;
+/// other objects (markers, points, polyhedra) are skipped.
 public struct ThreeDMFDecoder: SceneAssetDecoder {
 
     public static let fileExtensions = ["3dmf", "3dm", "q3d"]
@@ -68,6 +69,10 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         var metallic: Float?
         var texture: ImageBuffer?
         var name: String?
+        /// A vertex's, face's or corner's own normal.
+        var normal: SIMD3<Float>?
+        /// A vertex's surface (or shading) texture coordinates, QuickDraw 3D's way up.
+        var uv: SIMD2<Float>?
 
         /// These attributes over `base`.
         func over(_ base: Attributes) -> Attributes {
@@ -79,7 +84,9 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
                 emissive: emissive ?? base.emissive,
                 metallic: metallic ?? base.metallic,
                 texture: texture ?? base.texture,
-                name: name
+                name: name,
+                normal: normal ?? base.normal,
+                uv: uv ?? base.uv
             )
         }
     }
@@ -132,10 +139,18 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
             case 1 where c1 > 0: state.subdivision = .worldSpace(c1)
             default: state.subdivision = .default
             }
-        case .triMesh, .triangle, .polygon, .box, .ellipsoid, .cone, .cylinder, .disk, .torus:
+        case .triMesh, .triangle, .polygon, .box, .ellipsoid, .cone, .cylinder, .disk, .torus,
+             .generalPolygon, .mesh, .triGrid, .nurbPatch, .nurbCurve, .line, .polyLine, .ellipse:
             let (mesh, own, parts) = try geometry(object, state: state)
+            guard mesh.vertexCount > 0 else { break }
             let hasColors = mesh.stream(.color) != nil
-            let materials = parts.map { Material(material($0.over(state.attributes), state: state, hasVertexColors: hasColors)) }
+            let isLines = mesh.submeshes.first.map { $0.primitive == .lines || $0.primitive == .lineStrip } ?? false
+            let materials = parts.map { part in
+                var descriptor = material(part.over(state.attributes), state: state, hasVertexColors: hasColors)
+                // Lines have no normals to light by.
+                if isLines { descriptor.lightingModel = .unlit }
+                return Material(descriptor)
+            }
             let geometry = Geometry(mesh: mesh, materials: materials)
             let node = Node(name: own.name ?? Self.name(in: object.children), geometry: geometry)
             node.transform = state.transform
@@ -191,7 +206,7 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
     // MARK: Attributes
 
     /// An attribute set: its elements are its children.
-    private func attributes(_ set: MetafileObject) throws(SceneFormatError) -> Attributes {
+    func attributes(_ set: MetafileObject) throws(SceneFormatError) -> Attributes {
         var attributes = Attributes()
         for element in set.children {
             var r = element.reader()
@@ -202,6 +217,11 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
             case .transparencyColor: attributes.transparency = try r.vector3()
             case .emissiveColor: attributes.emissive = try r.vector3()
             case .metallic: attributes.metallic = try r.float32()
+            case .normal: attributes.normal = try r.vector3()
+            case .surfaceUV: attributes.uv = SIMD2(try r.float32(), try r.float32())
+            case .shadingUV:
+                let uv = SIMD2(try r.float32(), try r.float32())
+                if attributes.uv == nil { attributes.uv = uv }
             case .textureShader: attributes.texture = try texture(element)
             case .surfaceShaderAttribute:
                 if let shader = element.children.first(where: { $0.type == .textureShader }) {
@@ -277,11 +297,20 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
             own = try attributes(child).over(own)
         }
         own.name = own.name ?? Self.name(in: object.children)
+        let color = own.over(state.attributes).diffuse ?? SIMD3(repeating: 1)
         switch object.type {
         case .triMesh: return (try triMesh(object), own, [own])
-        case .triangle: return (try polygon(object, count: 3), own, [own])
-        case .polygon: return (try polygon(object, count: nil), own, [own])
+        case .triangle: return (try polygon(object, count: 3, defaultColor: color), own, [own])
+        case .polygon: return (try polygon(object, count: nil, defaultColor: color), own, [own])
+        case .generalPolygon: return (try generalPolygon(object, defaultColor: color), own, [own])
+        case .mesh: return (try polygonMesh(object, defaultColor: color), own, [own])
+        case .triGrid: return (try triGrid(object, defaultColor: color), own, [own])
         case .box: return (try box(object), own, [own])
+        case .nurbPatch: return (try nurbPatch(object, state: state), own, [own])
+        case .nurbCurve: return (try nurbCurve(object, state: state), own, [own])
+        case .line: return (try polyLine(object, count: 2), own, [own])
+        case .polyLine: return (try polyLine(object, count: nil), own, [own])
+        case .ellipse: return (try ellipse(object, state: state), own, [own])
         default: break
         }
         // A quadric: its face and caps may each have attributes of their own, over the geometry's.
@@ -399,17 +428,212 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         return arrays.mesh(points: points, triangles: triangles)
     }
 
-    /// A Triangle (three points) or a Polygon (a count, then the points, convex), fanned into triangles.
-    private func polygon(_ object: MetafileObject, count: Int?) throws(SceneFormatError) -> MeshBuffer {
+    /// A Triangle (three points) or a Polygon (a count, then the points), with a vertex attribute set list.
+    private func polygon(_ object: MetafileObject, count: Int?, defaultColor: SIMD3<Float>) throws(SceneFormatError) -> MeshBuffer {
         var r = object.reader()
         let n: Int
         if let count { n = count } else { n = Int(try r.uint32()) }
-        guard n >= 3, n < 1 << 20 else { throw .malformed("A polygon of \(n) points", offset: nil) }
+        // Too few points to draw, as Quesa's deliberately broken samples have: nothing, not an error.
+        guard n >= 3 else { return .empty }
+        guard n < 1 << 20 else { throw .malformed("A polygon of \(n) points", offset: nil) }
+        let vertexSets = try attributeSetList(.vertexAttributeSetList, in: object)
+        var vertices: [PolygonMeshBuilder.Vertex] = []
+        for i in 0..<n {
+            vertices.append(.init(position: try r.vector3(), attributes: i < vertexSets.count ? vertexSets[i] ?? .init() : .init()))
+        }
+        var builder = PolygonMeshBuilder()
+        builder.addFace([vertices])
+        return builder.build(defaultColor: defaultColor)
+    }
+
+    /// A GeneralPolygon: a count of contours, each a count and its points; a vertex attribute set list runs over
+    /// every contour's vertices in order. Contours combine by the even-odd rule.
+    private func generalPolygon(_ object: MetafileObject, defaultColor: SIMD3<Float>) throws(SceneFormatError) -> MeshBuffer {
+        var r = object.reader()
+        let contourCount = Int(try r.uint32())
+        guard contourCount >= 1 else { return .empty }
+        guard contourCount < 1 << 16 else { throw .malformed("A polygon of \(contourCount) contours", offset: nil) }
+        let vertexSets = try attributeSetList(.vertexAttributeSetList, in: object)
+        var contours: [[PolygonMeshBuilder.Vertex]] = []
+        var index = 0
+        for _ in 0..<contourCount {
+            let count = Int(try r.uint32())
+            guard count < 1 << 20 else { throw .malformed("A contour of \(count) points", offset: nil) }
+            var contour: [PolygonMeshBuilder.Vertex] = []
+            for _ in 0..<count {
+                contour.append(.init(position: try r.vector3(), attributes: index < vertexSets.count ? vertexSets[index] ?? .init() : .init()))
+                index += 1
+            }
+            contours.append(contour)
+        }
+        var builder = PolygonMeshBuilder()
+        builder.addFace(contours)
+        return builder.build(defaultColor: defaultColor)
+    }
+
+    /// A Mesh: its vertices; a count of faces and of contours; then each face's vertex indices, a negative count
+    /// marking a contour (a hole) of the face before it. Face and vertex attribute set lists, and corners — a
+    /// vertex's attributes on particular faces — follow as children.
+    private func polygonMesh(_ object: MetafileObject, defaultColor: SIMD3<Float>) throws(SceneFormatError) -> MeshBuffer {
+        var r = object.reader()
+        let vertexCount = Int(try r.uint32())
+        guard vertexCount >= 3 else { return .empty }
+        guard vertexCount < 1 << 24 else { throw .malformed("A mesh of \(vertexCount) vertices", offset: nil) }
+        var points: [SIMD3<Float>] = []
+        for _ in 0..<vertexCount { points.append(try r.vector3()) }
+        let faceCount = Int(try r.uint32())
+        let contourCount = Int(try r.uint32())
+        guard faceCount + contourCount < 1 << 24 else { throw .malformed("A mesh of \(faceCount) faces", offset: nil) }
+        var faces: [[[Int]]] = []
+        for _ in 0 ..< faceCount + contourCount {
+            let signed = Int(try r.int32())
+            var loop: [Int] = []
+            for _ in 0 ..< abs(signed) {
+                let index = Int(try r.uint32())
+                guard index < vertexCount else { throw .malformed("Vertex \(index) of \(vertexCount)", offset: nil) }
+                loop.append(index)
+            }
+            if signed < 0, !faces.isEmpty {
+                faces[faces.count - 1].append(loop)
+            } else {
+                faces.append([loop])
+            }
+        }
+        let vertexSets = try attributeSetList(.vertexAttributeSetList, in: object)
+        let faceSets = try attributeSetList(.faceAttributeSetList, in: object)
+        // Corners: for each, a vertex, the faces it applies on, then (as children) its attribute set.
+        var corners: [Int: [Int: Attributes]] = [:] // face → vertex → attributes
+        for list in object.children where list.type == .meshCorners {
+            var c = list.reader()
+            let count = Int(try c.uint32())
+            let sets = list.children.filter { $0.type == .attributeSet }
+            for k in 0 ..< min(count, 1 << 20) {
+                let vertex = Int(try c.uint32())
+                let faceTotal = Int(try c.uint32())
+                var cornerFaces: [Int] = []
+                for _ in 0 ..< min(faceTotal, 1 << 20) { cornerFaces.append(Int(try c.uint32())) }
+                guard k < sets.count else { continue }
+                let set = try attributes(sets[k])
+                for face in cornerFaces { corners[face, default: [:]][vertex] = set }
+            }
+        }
+        var builder = PolygonMeshBuilder()
+        for (f, loops) in faces.enumerated() {
+            let contours = loops.map { loop in
+                loop.map { index in
+                    var attributes = index < vertexSets.count ? vertexSets[index] ?? .init() : .init()
+                    if let corner = corners[f]?[index] { attributes = corner.over(attributes) }
+                    return PolygonMeshBuilder.Vertex(position: points[index], attributes: attributes)
+                }
+            }
+            builder.addFace(contours, attributes: f < faceSets.count ? faceSets[f] ?? .init() : .init())
+        }
+        return builder.build(defaultColor: defaultColor)
+    }
+
+    /// A TriGrid: rows and columns of points, two triangles a cell with the diagonal alternating by column, as Quesa
+    /// cuts them; face attribute sets are per triangle.
+    private func triGrid(_ object: MetafileObject, defaultColor: SIMD3<Float>) throws(SceneFormatError) -> MeshBuffer {
+        var r = object.reader()
+        let rows = Int(try r.uint32()), columns = Int(try r.uint32())
+        guard rows >= 2, columns >= 2 else { return .empty }
+        guard rows * columns < 1 << 24 else { throw .malformed("A \(rows)×\(columns) TriGrid", offset: nil) }
+        var points: [SIMD3<Float>] = []
+        for _ in 0 ..< rows * columns { points.append(try r.vector3()) }
+        let vertexSets = try attributeSetList(.vertexAttributeSetList, in: object)
+        let faceSets = try attributeSetList(.faceAttributeSetList, in: object)
+        func vertex(_ i: Int) -> PolygonMeshBuilder.Vertex {
+            .init(position: points[i], attributes: i < vertexSets.count ? vertexSets[i] ?? .init() : .init())
+        }
+        var builder = PolygonMeshBuilder()
+        var facet = 0
+        for row in 0 ..< rows - 1 {
+            for col in 0 ..< columns - 1 {
+                let v = row * columns + col
+                let odd = col & 1 != 0
+                for triangle in [[v, v + 1 + (odd ? columns : 0), v + columns], [v + (odd ? 0 : columns), v + 1, v + columns + 1]] {
+                    builder.addFace([triangle.map(vertex)], attributes: facet < faceSets.count ? faceSets[facet] ?? .init() : .init())
+                    facet += 1
+                }
+            }
+        }
+        return builder.build(defaultColor: defaultColor)
+    }
+
+    /// A NURBPatch: u and v orders, rows and columns, the control points (x, y, z, w), then the u and v knots.
+    private func nurbPatch(_ object: MetafileObject, state: State) throws(SceneFormatError) -> MeshBuffer {
+        var r = object.reader()
+        let uOrder = Int(try r.uint32()), vOrder = Int(try r.uint32())
+        let rows = Int(try r.uint32()), columns = Int(try r.uint32())
+        guard rows * columns < 1 << 20, uOrder < 64, vOrder < 64 else { throw .malformed("A \(rows)×\(columns) NURB patch", offset: nil) }
+        var points: [SIMD4<Float>] = []
+        for _ in 0 ..< rows * columns { points.append(SIMD4(try r.float32(), try r.float32(), try r.float32(), try r.float32())) }
+        let uKnots = try r.floats(columns + uOrder), vKnots = try r.floats(rows + vOrder)
+        let patch = NURBSPatch(uOrder: uOrder, vOrder: vOrder, rows: rows, columns: columns, controlPoints: points, uKnots: uKnots, vKnots: vKnots)
+        guard patch.isValid else { throw .malformed("An inconsistent NURB patch", offset: nil) }
+        return patch.makeMesh(segmentsPerSpan: nurbsSegments(state))
+    }
+
+    /// A NURBCurve: its order, the number of points, the control points (x, y, z, w), then the knots.
+    private func nurbCurve(_ object: MetafileObject, state: State) throws(SceneFormatError) -> MeshBuffer {
+        var r = object.reader()
+        let order = Int(try r.uint32()), count = Int(try r.uint32())
+        guard count < 1 << 20, order < 64 else { throw .malformed("A NURB curve of \(count) points", offset: nil) }
+        var points: [SIMD4<Float>] = []
+        for _ in 0..<count { points.append(SIMD4(try r.float32(), try r.float32(), try r.float32(), try r.float32())) }
+        let curve = NURBSCurve(order: order, controlPoints: points, knots: try r.floats(count + order))
+        guard curve.isValid else { throw .malformed("An inconsistent NURB curve", offset: nil) }
+        return curve.makeMesh(segmentsPerSpan: nurbsSegments(state))
+    }
+
+    /// Segments a knot span for curves and patches: a constant style's first count, else Quesa's look of 8.
+    private func nurbsSegments(_ state: State) -> Int {
+        if case .constant(let u, _) = state.subdivision, u != 16 { return min(max(u, 1), 64) }
+        return 8
+    }
+
+    /// An Ellipse: major and minor radii and an origin, then the part of it drawn (u from 0 to 1, from the major
+    /// radius toward the minor), as a line strip; by default a unit circle in the plane of y and z.
+    private func ellipse(_ object: MetafileObject, state: State) throws(SceneFormatError) -> MeshBuffer {
+        var r = object.reader()
+        var major = SIMD3<Float>(0, 1, 0), minor = SIMD3<Float>(0, 0, 1), origin = SIMD3<Float>.zero
+        var uMin: Float = 0, uMax: Float = 1
+        if !r.isAtEnd {
+            major = try r.vector3()
+            minor = try r.vector3()
+            origin = try r.vector3()
+            if !r.isAtEnd { uMin = try r.float32() }
+            if !r.isAtEnd { uMax = try r.float32() }
+        }
+        if uMax < uMin { uMax += 1 }
+        let segments: Int
+        if case .constant(let u, _) = state.subdivision { segments = u } else { segments = 16 }
+        let count = max(Int(Float(segments) * (uMax - uMin)), 2)
+        let points = (0...count).map { i -> SIMD3<Float> in
+            let angle = 2 * Float.pi * (uMin + (uMax - uMin) * Float(i) / Float(count))
+            return origin + major * Elementary.cos(angle) + minor * Elementary.sin(angle)
+        }
+        return MeshBuffer(
+            vertexCount: points.count,
+            streams: [VertexStream(semantic: .position, vectors: points)],
+            submeshes: [Submesh(primitive: .lineStrip, range: 0 ..< points.count, materialIndex: 0)]
+        )
+    }
+
+    /// A Line (two points) or a PolyLine (a count, then the points), as a line strip.
+    private func polyLine(_ object: MetafileObject, count: Int?) throws(SceneFormatError) -> MeshBuffer {
+        var r = object.reader()
+        let n: Int
+        if let count { n = count } else { n = Int(try r.uint32()) }
+        guard n >= 2 else { return .empty }
+        guard n < 1 << 20 else { throw .malformed("A line of \(n) points", offset: nil) }
         var points: [SIMD3<Float>] = []
         for _ in 0..<n { points.append(try r.vector3()) }
-        var triangles: [Int] = []
-        for i in 1 ..< n - 1 { triangles += [0, i, i + 1] }
-        return TriMeshAttributes().mesh(points: points, triangles: triangles)
+        return MeshBuffer(
+            vertexCount: n,
+            streams: [VertexStream(semantic: .position, vectors: points)],
+            submeshes: [Submesh(primitive: .lineStrip, range: 0..<n, materialIndex: 0)]
+        )
     }
 
     /// A Box: an origin corner and three edges (orientation, major and minor axes); a unit cube by default.

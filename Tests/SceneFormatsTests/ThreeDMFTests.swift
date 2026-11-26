@@ -300,3 +300,93 @@ private func binaryFixture(_ order: Metafile3D.ByteOrder) -> [UInt8] {
         #expect(abs(bounds.max.x - 1) < 1e-5 && abs(bounds.min.x + 1) < 1e-5)
     }
 }
+
+@Suite struct ThreeDMFPolygonTests {
+
+    private func decode(_ text: String) throws -> [Node] {
+        try ThreeDMFDecoder(isStrict: true).decodeScene(Array(("3DMetafile ( 1 6 Normal )\n" + text).utf8)).rootNode.children
+    }
+
+    private func area(_ mesh: MeshBuffer) -> Float {
+        let p = mesh.positions
+        return mesh.triangles(in: mesh.submeshes[0]).reduce(0) { $0 + (p[$1.y] - p[$1.x]).cross(p[$1.z] - p[$1.x]).length / 2 }
+    }
+
+    @Test func generalPolygonWithHole() throws {
+        let nodes = try decode("""
+        GeneralPolygon ( 2  4  0 0 0  4 0 0  4 4 0  0 4 0  4  1 1 0  3 1 0  3 3 0  1 3 0 )
+        """)
+        let mesh = try #require(nodes.first?.geometry?.mesh)
+        #expect(abs(area(mesh) - 12) < 1e-4)
+    }
+
+    @Test func vertexColorsFromAttributeSetList() throws {
+        let nodes = try decode("""
+        Container (
+            Polygon ( 3  0 0 0  1 0 0  0 1 0 )
+            Container (
+                VertexAttributeSetList ( 3 Exclude 1 1 )
+                Container ( AttributeSet ( ) DiffuseColor ( 1 0 0 ) )
+                Container ( AttributeSet ( ) DiffuseColor ( 0 0 1 ) )
+            )
+            Container ( AttributeSet ( ) DiffuseColor ( 0 1 0 ) )
+        )
+        """)
+        let mesh = try #require(nodes.first?.geometry?.mesh)
+        let colors = try #require(mesh.stream(.color))
+        // Vertex 1 is excluded, so takes the geometry's green; the others their own.
+        #expect(Array(colors[0]) == [1, 0, 0, 1])
+        #expect(Array(colors[1]) == [0, 1, 0, 1])
+        #expect(Array(colors[2]) == [0, 0, 1, 1])
+        #expect(nodes.first?.geometry?.firstMaterial?.diffuse.color == SIMD4(1, 1, 1, 1))
+    }
+
+    @Test func meshFacesContoursAndCorners() throws {
+        // A square face with a square hole (a negative count), and a corner giving vertex 0 its own normal.
+        let nodes = try decode("""
+        Container (
+            Mesh (
+                8  0 0 0  4 0 0  4 4 0  0 4 0  1 1 0  3 1 0  3 3 0  1 3 0
+                1 1
+                4  0 1 2 3
+                -4  4 5 6 7
+            )
+            Container (
+                MeshCorners ( 1  0 1 0 )
+                Container ( AttributeSet ( ) Normal ( 0 0.6 0.8 ) )
+            )
+        )
+        """)
+        let mesh = try #require(nodes.first?.geometry?.mesh)
+        #expect(abs(area(mesh) - 12) < 1e-4)
+        let normals = try #require(mesh.stream(.normal))
+        #expect(Array(normals[0]) == [0, 0.6, 0.8])
+        #expect(Array(normals[1]) == [0, 0, 1])
+    }
+
+    @Test func triGridAlternatesDiagonals() throws {
+        let nodes = try decode("TriGrid ( 2 3  0 0 0  1 0 0  2 0 0  0 1 0  1 1 0  2 1 0 )")
+        let mesh = try #require(nodes.first?.geometry?.mesh)
+        #expect(mesh.triangles(in: mesh.submeshes[0]).count == 4)
+        #expect(abs(area(mesh) - 2) < 1e-5)
+    }
+
+    @Test func curvesAreUnlitLines() throws {
+        let nodes = try decode("""
+        PolyLine ( 3  0 0 0, 1 0 0, 1 1 0 )
+        Ellipse ( )
+        NURBCurve ( 2 2  0 0 0 1  1 1 0 1  0 0 1 1 )
+        """)
+        #expect(nodes.count == 3)
+        for node in nodes {
+            #expect(node.geometry?.mesh.submeshes.first?.primitive == .lineStrip)
+            #expect(node.geometry?.firstMaterial?.lightingModel == .unlit)
+        }
+        #expect(nodes[0].geometry?.mesh.positions.last == SIMD3(1, 1, 0))
+    }
+
+    @Test func degenerateGeometryIsSkipped() throws {
+        #expect(try decode("Mesh ( 2  0 0 0  1 0 0  0 0 )").isEmpty)
+        #expect(try decode("PolyLine ( 0 )").isEmpty)
+    }
+}
