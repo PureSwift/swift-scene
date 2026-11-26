@@ -17,6 +17,9 @@ public final class Scene {
     /// Transactions' completions, by when they are due.
     var pendingCompletions: [(due: Duration, completion: () -> Void)] = []
 
+    /// What runs with the scene each update, after its actions: a physics world, say.
+    public var systems: [any SceneSystem] = []
+
     public init() {
         self.rootNode = Node(name: "root")
     }
@@ -31,11 +34,14 @@ public final class Scene {
     /// The store the scene's nodes' components are in.
     public var store: EntityStore { rootNode.store }
 
-    /// Moves the scene on by the time: actions run, then transactions' completions that are due.
+    /// Moves the scene on by the time: actions run, then systems, then transactions' completions that are due.
     public func update(by delta: Duration) {
         guard !isPaused, delta > .zero else { return }
         time += delta
         rootNode.advanceActions(by: delta)
+        for system in systems {
+            system.update(self, by: delta)
+        }
         guard !pendingCompletions.isEmpty else { return }
         let due = pendingCompletions.filter { $0.due <= time }
         pendingCompletions.removeAll { $0.due <= time }
@@ -112,4 +118,13 @@ public extension Scene {
             hitTest(ray, node: child, parentWorld: world, into: &results)
         }
     }
+}
+
+// MARK: - Systems
+
+/// Something that moves a scene on each update, as a physics world does: modules above `SceneGraph` plug in
+/// without it knowing them.
+public protocol SceneSystem: AnyObject {
+
+    func update(_ scene: Scene, by delta: Duration)
 }
