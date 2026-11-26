@@ -1,4 +1,5 @@
 import SceneCore
+import SceneFormats
 import SceneGraph
 import SceneSDL
 import SDL3Swift
@@ -12,6 +13,10 @@ import SDL3Swift
 //   R           reset the camera
 //   Esc         quit
 //
+// Usage: scene-viewer [options] [file]
+//
+// With a file (.3dmf), shows it; without, a demo scene.
+//
 // Options:
 //   --es               OpenGL ES 3.0 instead of OpenGL 3.3 Core
 //   --frames <n>       quit after n frames
@@ -21,6 +26,7 @@ struct Options {
     var profile = SDLRenderBackend.Profile.core
     var frameLimit: Int?
     var snapshotPath: String?
+    var file: String?
 
     init(_ arguments: [String]) {
         var arguments = arguments.makeIterator()
@@ -29,6 +35,7 @@ struct Options {
             case "--es": profile = .es
             case "--frames": frameLimit = arguments.next().flatMap { Int($0) }
             case "--snapshot": snapshotPath = arguments.next()
+            case let path where !path.hasPrefix("--"): file = path
             default: print("scene-viewer: ignoring \(argument)")
             }
         }
@@ -76,6 +83,41 @@ func makeScene() -> Scene {
     }
 }
 
+/// A file's scene, with a camera, and lights when it has none.
+func loadScene(_ path: String) throws -> Scene {
+    guard let bytes = readFile(path) else {
+        print("scene-viewer: couldn't read \(path)")
+        exit(1)
+    }
+    let ext = path.split(separator: ".").last.map { $0.lowercased() } ?? ""
+    guard ThreeDMFDecoder.fileExtensions.contains(ext) else {
+        print("scene-viewer: no decoder for .\(ext) files")
+        exit(1)
+    }
+    let scene = try ThreeDMFDecoder().decodeScene(bytes)
+    var hasLight = false
+    scene.rootNode.enumerateHierarchy { node, stop in
+        if node.light != nil { hasLight = true; stop = true }
+    }
+    if !hasLight {
+        scene.rootNode.addChild(Node(name: "sun")
+            .light(Light(LightDescriptor(kind: .directional, intensity: 900)))
+            .positioned(at: [2, 3, 4])
+            .looking(at: .zero))
+        scene.rootNode.addChild(Node(name: "fill").light(Light(LightDescriptor(kind: .ambient, intensity: 250))))
+    }
+    scene.rootNode.addChild(Node(name: "camera").camera(Camera(CameraDescriptor(zNear: 0.01, zFar: 1000))))
+    return scene
+}
+
+/// An orbit framing the scene's geometry.
+func framing(_ scene: Scene) -> OrbitCamera {
+    let bounds = scene.rootNode.hierarchyBoundingBox
+    guard !bounds.isEmpty else { return OrbitCamera() }
+    let sphere = bounds.boundingSphere
+    return OrbitCamera(target: sphere.center, yaw: 0, pitch: 0.2, distance: max(sphere.radius, 0.01) * 2.8)
+}
+
 func run() throws {
     let options = Options(Array(CommandLine.arguments.dropFirst()))
     try SDL.initialize(subSystems: [.video, .events])
@@ -96,10 +138,11 @@ func run() throws {
     }
     print("OpenGL: \(backend.renderer.version) — \(backend.renderer.renderer)")
 
-    let scene = makeScene()
+    let scene = try options.file.map(loadScene) ?? makeScene()
     let renderer = SceneRenderer(backend: backend, scene: scene)
     let cameraNode = scene.rootNode.childNode(named: "camera")!
-    var orbit = OrbitCamera(target: [0.6, 0.4, 0])
+    let initialOrbit = options.file == nil ? OrbitCamera(target: [0.6, 0.4, 0]) : framing(scene)
+    var orbit = initialOrbit
     orbit.apply(to: cameraNode)
     let clear = SIMD4<Float>(0.05, 0.06, 0.08, 1)
 
@@ -143,7 +186,7 @@ func run() throws {
                 case Keycode(character: "w"):
                     backend.renderer.isWireframe.toggle()
                 case Keycode(character: "r"):
-                    orbit = OrbitCamera(target: orbit.target)
+                    orbit = initialOrbit
                     orbit.apply(to: cameraNode)
                 default:
                     break
