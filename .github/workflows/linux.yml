@@ -40,17 +40,22 @@ jobs:
             ca-certificates curl git gnupg2 unzip tzdata binutils pkg-config cmake make gcc g++ \
             libc6-dev libgcc-14-dev libstdc++-14-dev libcurl4-openssl-dev libedit2 libpython3-dev \
             libsqlite3-0 libxml2-dev libncurses-dev libz3-dev zlib1g-dev \
+            binutils-gold libicu-dev libedit-dev libsqlite3-dev zip \
             libsdl3-dev
 
       - uses: actions/checkout@v4
 
       - name: Install Swift
+        # Outside the checkout, so swiftly doesn't pin the version in it.
+        working-directory: /tmp
         run: |
           curl -fsSL -o swiftly.tar.gz "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
           tar -xzf swiftly.tar.gz
           ./swiftly init --assume-yes --quiet-shell-followup --skip-install --no-modify-profile
           . "$SWIFTLY_HOME_DIR/env.sh"
           swiftly install "$SWIFT_VERSION" --use --assume-yes
+          swiftly link
+          hash -r
           echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
           swift --version
 
