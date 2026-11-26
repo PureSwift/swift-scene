@@ -83,9 +83,8 @@ struct QuesaModelTests {
             }
         }
         #expect(failures.isEmpty, Comment(rawValue: "\(failures.count) of \(paths.count) failed:\n" + failures.joined(separator: "\n")))
-        // Every sample with geometry that isn't deliberately degenerate (the GeoWarn and TopoErr ones), a marker or a
-        // point: 155 at Quesa's a7dccbff.
-        #expect(withGeometry >= 155)
+        // Every sample but the deliberately degenerate ones (GeoWarn and TopoErr): 158 at Quesa's a7dccbff.
+        #expect(withGeometry >= 158)
         print("Decoded geometry from \(withGeometry) of \(paths.count) sample models")
     }
 }
