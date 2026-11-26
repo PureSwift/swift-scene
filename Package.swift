@@ -99,6 +99,11 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
         .testTarget(
+            name: "SceneFormatsTests",
+            dependencies: ["SceneCore", "SceneGraph", "SceneFormats"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
             name: "SceneSDLTests",
             dependencies: [
                 "SceneCore",

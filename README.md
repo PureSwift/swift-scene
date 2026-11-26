@@ -9,7 +9,7 @@ one data-oriented core, with asset codecs (3DMF, OBJ, glTF, Collada, SCN, USD) a
 | `SceneCore` | `Matrix4x4`, `Quaternion`, `Transform`, bounds, rays and frusta; the sparse-set `EntityStore`; `MeshBuffer`, `MaterialDescriptor`, light and camera descriptors; the `RenderBackend` and `FrameCommandBuffer` protocols |
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
-| `SceneFormats` | Asset codecs: 3DMF (from Quesa), OBJ, glTF, Collada, SCN *(planned)* |
+| `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order) and text, ported from Quesa; OBJ, glTF, Collada and SCN *(planned)* |
 | `SceneUSD` | `.usda`, `.usdc` and `.usdz` *(planned)* |
 | `ScenePhysics` | Rigid bodies and collision *(planned)* |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
@@ -33,7 +33,7 @@ try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
 
 ## Viewer
 
-`scene-viewer` opens a window on a demo scene: drag to orbit, scroll to zoom, W for wireframe, space to pause,
+`scene-viewer [file.3dmf]` opens a window on a file, or on a demo scene without one: drag to orbit, scroll to zoom, W for wireframe, space to pause,
 R to reset the camera. `--snapshot <path.bmp>` draws one frame to a file, `--frames <n>` quits after n frames,
 and `--es` asks for OpenGL ES 3.0.
 
@@ -42,3 +42,8 @@ It needs SDL3: `brew install sdl3` on macOS, `apt install libsdl3-dev` on Debian
 ```sh
 swift run scene-viewer
 ```
+
+## Acknowledgments
+
+The 3DMF reader is ported from [Quesa](https://github.com/jwwalker/quesa), © 1999–2021 Quesa Developers, under the
+BSD 3-Clause License in `LICENSE-Quesa`.
