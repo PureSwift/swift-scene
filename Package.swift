@@ -61,10 +61,19 @@ let package = Package(
             dependencies: ["SceneCore", "SceneGraph", "SceneReality", "SceneFormats"],
             swiftSettings: swiftSettings
         ),
+        // Rigid body physics over Box3D, on Linux for now.
         .target(
             name: "ScenePhysics",
-            dependencies: ["SceneCore"],
+            dependencies: [
+                "SceneCore",
+                .target(name: "CBox3D", condition: .when(platforms: [.linux])),
+            ],
             swiftSettings: swiftSettings
+        ),
+        // Box3D (github.com/erincatto/box3d), built with CMake and found by pkg-config.
+        .systemLibrary(
+            name: "CBox3D",
+            pkgConfig: "box3d"
         ),
         // The SDL3 host and OpenGL render backend.
         .target(
@@ -101,6 +110,11 @@ let package = Package(
         .testTarget(
             name: "SceneFormatsTests",
             dependencies: ["SceneCore", "SceneGraph", "SceneFormats"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "ScenePhysicsTests",
+            dependencies: ["SceneCore", "ScenePhysics"],
             swiftSettings: swiftSettings
         ),
         .testTarget(
