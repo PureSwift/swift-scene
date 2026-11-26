@@ -10,8 +10,10 @@ import SceneGraph
 /// The objects are submitted in order as QuickDraw 3D would draw them: transforms, attribute sets and shaders
 /// change the state for what follows in the same group; each group is a node, its state its own; each geometry
 /// is a node placed by the transforms before it. Geometry is TriMesh, Triangle, Polygon, GeneralPolygon, Mesh,
-/// TriGrid, Box, the quadrics (Ellipsoid, Cone, Cylinder, Disk, Torus), NURB patches and curves, Line, PolyLine and Ellipse;
-/// other objects (markers, points, polyhedra) are skipped.
+/// TriGrid, Box, the quadrics (Ellipsoid, Cone, Cylinder, Disk, Torus), NURB patches and curves, Line, PolyLine, Ellipse,
+/// and Point, with markers as points at their places. Lights, cameras and view hints become nodes and the scene's
+/// background; backfacing, orientation, fill and subdivision styles shape what follows. Polyhedra, NURB trim curves,
+/// fog and the rendering-only styles are skipped.
 public struct ThreeDMFDecoder: SceneAssetDecoder {
 
     public static let fileExtensions = ["3dmf", "3dm", "q3d"]
@@ -34,7 +36,7 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
     public func decodeScene(_ metafile: Metafile3D) throws(SceneFormatError) -> Scene {
         let scene = Scene()
         var state = State()
-        try submit(metafile.objects, to: scene.rootNode, state: &state)
+        try submit(metafile.objects, to: scene.rootNode, in: scene, state: &state)
         return scene
     }
 
@@ -46,6 +48,33 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         var attributes = Attributes()
         var lightingModel: LightingModel?
         var subdivision = Subdivision.default
+        /// Which sides of a surface draw; QuickDraw 3D draws both by default.
+        var backfacing = Backfacing.both
+        /// Whether front faces wind clockwise rather than counter-clockwise.
+        var isClockwise = false
+        var fill = Fill.filled
+        var castsShadows = false
+    }
+
+    /// `TQ3BackfacingStyle`.
+    enum Backfacing: UInt32 {
+        case both = 0, culled = 1, flipped = 2, cullFront = 3
+
+        static let names: [String: UInt32] = ["both": 0, "culled": 1, "flipped": 2, "cullfront": 3]
+    }
+
+    /// `TQ3FillStyle`.
+    enum Fill: UInt32 {
+        case filled = 0, edges = 1, points = 2
+
+        static let names: [String: UInt32] = ["filled": 0, "edges": 1, "points": 2]
+    }
+
+    /// A texture shader's image and how it's laid on.
+    struct TextureMap {
+        var image: ImageBuffer
+        var sampler = TextureSampler(wrapS: .repeat, wrapT: .repeat, mipFilter: .linear)
+        var transform = Matrix4x4.identity
     }
 
     /// How finely curved surfaces are cut into triangles.
@@ -67,7 +96,7 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         var transparency: SIMD3<Float>?
         var emissive: SIMD3<Float>?
         var metallic: Float?
-        var texture: ImageBuffer?
+        var texture: TextureMap?
         var name: String?
         /// A vertex's, face's or corner's own normal.
         var normal: SIMD3<Float>?
@@ -93,27 +122,60 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
 
     // MARK: Submitting
 
-    private func submit(_ objects: [MetafileObject], to parent: Node, state: inout State) throws(SceneFormatError) {
+    private func submit(_ objects: [MetafileObject], to parent: Node, in scene: Scene, state: inout State) throws(SceneFormatError) {
         for object in objects {
             do {
-                try submit(object, to: parent, state: &state)
+                try submit(object, to: parent, in: scene, state: &state)
             } catch {
                 if isStrict { throw error }
             }
         }
     }
 
-    private func submit(_ object: MetafileObject, to parent: Node, state: inout State) throws(SceneFormatError) {
+    private func submit(_ object: MetafileObject, to parent: Node, in scene: Scene, state: inout State) throws(SceneFormatError) {
         switch object.type {
         case .group, .displayGroup, .orderedDisplayGroup, .ioProxyDisplayGroup, .lightGroup, .infoGroup:
             // A group draws with its own copy of the state, from where it is.
             let node = Node()
             node.transform = state.transform
             node.name = Self.name(in: object.children)
+            // A display group's state may say not to draw it.
+            if let groupState = object.children.first(where: { $0.type == .displayGroupState }) {
+                var r = groupState.reader()
+                let mask = try r.enumerated([
+                    "none": 0, "isinline": 1, "inline": 1, "donotdraw": 2, "noboundingbox": 4,
+                    "noboundingsphere": 8, "donotpick": 16, "donotbound": 32,
+                ])
+                node.isHidden = mask & 2 != 0
+            }
             parent.addChild(node)
             var inner = state
             inner.transform = .identity
-            try submit(object.children.filter { $0.type != .displayGroupState && $0.type != .displayGroupBoundingBox }, to: node, state: &inner)
+            try submit(object.children.filter { $0.type != .displayGroupState && $0.type != .displayGroupBoundingBox }, to: node, in: scene, state: &inner)
+        case .viewHints:
+            // The view a file was made for: its camera, lights and background, in the hints' children.
+            var inner = state
+            try submit(object.children, to: parent, in: scene, state: &inner)
+        case .imageClearColor:
+            var r = object.reader()
+            let color = try r.vector3()
+            scene.background = .color(SIMD4(color, 1))
+        case .ambientLight, .directionalLight, .pointLight, .spotLight:
+            if let node = try light(object, state: state) { parent.addChild(node) }
+        case .orthographicCamera, .viewPlaneCamera, .viewAngleCamera:
+            parent.addChild(try camera(object, state: state))
+        case .backfacingStyle:
+            var r = object.reader()
+            state.backfacing = Backfacing(rawValue: try r.enumerated(Backfacing.names)) ?? .both
+        case .orientationStyle:
+            var r = object.reader()
+            state.isClockwise = try r.enumerated(["counterclockwise": 0, "clockwise": 1]) == 1
+        case .fillStyle:
+            var r = object.reader()
+            state.fill = Fill(rawValue: try r.enumerated(Fill.names)) ?? .filled
+        case .castShadowsStyle:
+            var r = object.reader()
+            state.castsShadows = try r.boolean()
         case .matrixTransform, .scaleTransform, .translateTransform, .rotateTransform,
              .rotateAboutPointTransform, .rotateAboutAxisTransform, .quaternionTransform:
             state.transform = state.transform * (try Self.transform(object))
@@ -140,14 +202,17 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
             default: state.subdivision = .default
             }
         case .triMesh, .triangle, .polygon, .box, .ellipsoid, .cone, .cylinder, .disk, .torus,
-             .generalPolygon, .mesh, .triGrid, .nurbPatch, .nurbCurve, .line, .polyLine, .ellipse:
-            let (mesh, own, parts) = try geometry(object, state: state)
+             .generalPolygon, .mesh, .triGrid, .nurbPatch, .nurbCurve, .line, .polyLine, .ellipse,
+             .point, .marker, .pixmapMarker:
+            var (mesh, own, parts) = try geometry(object, state: state)
             guard mesh.vertexCount > 0 else { break }
+            // A fill style of edges or points draws the triangles' outlines or corners instead.
+            if state.fill != .filled { mesh = Self.outline(mesh, points: state.fill == .points) }
             let hasColors = mesh.stream(.color) != nil
-            let isLines = mesh.submeshes.first.map { $0.primitive == .lines || $0.primitive == .lineStrip } ?? false
+            let isLines = mesh.submeshes.first.map { $0.primitive != .triangles && $0.primitive != .triangleStrip } ?? false
             let materials = parts.map { part in
                 var descriptor = material(part.over(state.attributes), state: state, hasVertexColors: hasColors)
-                // Lines have no normals to light by.
+                // Lines and points have no normals to light by.
                 if isLines { descriptor.lightingModel = .unlit }
                 return Material(descriptor)
             }
@@ -234,15 +299,47 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         return attributes
     }
 
-    /// A texture shader's pixmap, as an image.
-    private func texture(_ shader: MetafileObject) throws(SceneFormatError) -> ImageBuffer? {
+    /// A texture shader's pixmap, as an image, with its UV boundaries (a `Shader` child: wrap, clamp or mirror) and
+    /// its UV transform (a `ShaderUVTransform` child).
+    private func texture(_ shader: MetafileObject) throws(SceneFormatError) -> TextureMap? {
         guard let pixmap = shader.children.first(where: { $0.type == .pixmapTexture }) else { return nil }
         var r = pixmap.reader()
-        return try Pixmap.read(&r)
+        var map = TextureMap(image: try Pixmap.read(&r))
+        if let boundaries = shader.children.first(where: { $0.type == .shader }) {
+            var b = boundaries.reader()
+            let names: [String: UInt32] = ["wrap": 0, "clamp": 1, "mirror": 2]
+            func mode(_ value: UInt32) -> TextureWrapMode {
+                switch value {
+                case 1: .clamp
+                case 2: .mirror
+                default: .repeat
+                }
+            }
+            if !b.isAtEnd { map.sampler.wrapS = mode(try b.enumerated(names)) }
+            if !b.isAtEnd { map.sampler.wrapT = mode(try b.enumerated(names)) }
+        }
+        if let uvTransform = shader.children.first(where: { $0.type == .shaderUVTransform }) {
+            var t = uvTransform.reader()
+            map.transform = Self.uvTransform(try t.floats(9))
+        }
+        return map
+    }
+
+    /// A shader UV transform: a 3 by 3 matrix acting on QuickDraw 3D's (u, v, 1) as a row vector, its v running up,
+    /// as a contents transform on ours, whose v runs down.
+    static func uvTransform(_ m: [Float]) -> Matrix4x4 {
+        // The same transform on column vectors (u, v, 0, 1).
+        var qd3d = Matrix4x4.identity
+        qd3d[0, 0] = m[0]; qd3d[0, 1] = m[3]; qd3d[0, 3] = m[6]
+        qd3d[1, 0] = m[1]; qd3d[1, 1] = m[4]; qd3d[1, 3] = m[7]
+        // v up to v down, and back.
+        var flip = Matrix4x4(scale: SIMD3(1, -1, 1))
+        flip[1, 3] = 1
+        return flip * qd3d * flip
     }
 
     /// The name a name element gives: its own string, or the string object after it.
-    private static func name(_ element: MetafileObject) throws(SceneFormatError) -> String? {
+    static func name(_ element: MetafileObject) throws(SceneFormatError) -> String? {
         var r = element.reader()
         if !r.isAtEnd { return try r.string() }
         guard let string = element.children.first(where: { $0.type == .cString }) else { return nil }
@@ -251,7 +348,7 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
     }
 
     /// The name among an object's elements, if one names it.
-    private static func name(in children: [MetafileObject]) -> String? {
+    static func name(in children: [MetafileObject]) -> String? {
         for child in children where child.type == .nameElement {
             if let name = try? name(child) { return name }
         }
@@ -263,7 +360,7 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
     private func material(_ attributes: Attributes, state: State, hasVertexColors: Bool) -> MaterialDescriptor {
         var material = MaterialDescriptor(lightingModel: state.lightingModel ?? (attributes.specular != nil ? .phong : .lambert))
         if let texture = attributes.texture {
-            material.diffuse = MaterialProperty(.texture(.image(texture)), sampler: TextureSampler(wrapS: .repeat, wrapT: .repeat, mipFilter: .linear))
+            material.diffuse = MaterialProperty(.texture(.image(texture.image)), sampler: texture.sampler, contentsTransform: texture.transform)
         } else {
             let diffuse = hasVertexColors ? SIMD3<Float>(repeating: 1) : attributes.diffuse ?? SIMD3(repeating: 1)
             material.diffuse = .color(SIMD4(diffuse, 1))
@@ -283,6 +380,15 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         }
         if let metallic = attributes.metallic {
             material.metalness = .scalar(metallic)
+        }
+        // Which sides draw: both, or the front or back, the front being the side the orientation style says.
+        switch state.backfacing {
+        case .both, .flipped:
+            material.isDoubleSided = true
+        case .culled:
+            material.cullMode = state.isClockwise ? .front : .back
+        case .cullFront:
+            material.cullMode = state.isClockwise ? .back : .front
         }
         material.name = attributes.name
         return material
@@ -311,6 +417,16 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         case .line: return (try polyLine(object, count: 2), own, [own])
         case .polyLine: return (try polyLine(object, count: nil), own, [own])
         case .ellipse: return (try ellipse(object, state: state), own, [own])
+        case .point, .marker, .pixmapMarker:
+            // A point, or a marker's place: its bitmap or pixmap, drawn facing the viewer, isn't.
+            var r = object.reader()
+            let location = try r.vector3()
+            let mesh = MeshBuffer(
+                vertexCount: 1,
+                streams: [VertexStream(semantic: .position, vectors: [location])],
+                submeshes: [Submesh(primitive: .points, range: 0..<1, materialIndex: 0)]
+            )
+            return (mesh, own, [own])
         default: break
         }
         // A quadric: its face and caps may each have attributes of their own, over the geometry's.
