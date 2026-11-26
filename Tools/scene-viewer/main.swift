@@ -148,6 +148,8 @@ func run() throws {
         exit(1)
     }
     print("OpenGL: \(backend.renderer.version) — \(backend.renderer.renderer)")
+    // Textures named by path, as OBJ materials name them.
+    backend.renderer.textureLoader = TextureImageLoader.load
 
     let scene = try options.file.map(loadScene) ?? makeScene()
     let renderer = SceneRenderer(backend: backend, scene: scene)

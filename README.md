@@ -31,16 +31,17 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneCore` | `Matrix4x4`, `Quaternion`, `Transform`, bounds, rays and frusta; polygon `Triangulation` with holes; the sparse-set `EntityStore`; `MeshBuffer`, `MaterialDescriptor`, light and camera descriptors; the `RenderBackend` and `FrameCommandBuffer` protocols |
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
-| `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order) and text, ported from Quesa; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; glTF, Collada and SCN *(planned)* |
+| `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order) and text, ported from Quesa; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; `PNGDecoder` (over [PureSwift/swift-png](https://github.com/PureSwift/swift-png)) and `TextureImageLoader` for textures; glTF, Collada and SCN *(planned)* |
 | `SceneUSD` | USD stages, `.usda`, `.usdc` and `.usdz` through [apple/SwiftUsd](https://github.com/apple/SwiftUsd)'s OpenUSD, on Apple platforms *(planned)* |
 | `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
 ## Building
 
-Swift 6 on Linux (developed on Debian 13) or macOS. Two system libraries:
+Swift 6 on Linux (developed on Debian 13) or macOS 15 and later. System libraries:
 
 - **SDL3** for `SceneSDL` and `scene-viewer`: `apt install libsdl3-dev`, or `brew install sdl3`.
+- **zlib** for swift-png's default system-zlib trait: `apt install zlib1g-dev`.
 - **Box3D** for `ScenePhysics`, built with CMake and found by pkg-config. Without root, install it in your home:
 
   ```sh

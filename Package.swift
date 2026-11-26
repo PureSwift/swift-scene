@@ -11,7 +11,8 @@ let swiftSettings: [SwiftSetting] = [
 let package = Package(
     name: "swift-scene",
     platforms: [
-        .macOS(.v13),
+        // swift-png's floor: Span, which its zlib uses, back-deploys no further.
+        .macOS(.v15),
         .iOS(.v16),
         .tvOS(.v16),
         .watchOS(.v9),
@@ -30,6 +31,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/PureSwift/SDL.git", branch: "master"),
+        // The Swift API is newer than the last tag.
+        .package(url: "https://github.com/PureSwift/swift-png.git", branch: "master"),
     ],
     targets: [
         // Math, spatial primitives, ECS storage, mesh and material descriptors, and the renderer protocols.
@@ -52,7 +55,11 @@ let package = Package(
         // Asset codecs: 3DMF, OBJ, glTF, Collada, SCN.
         .target(
             name: "SceneFormats",
-            dependencies: ["SceneCore", "SceneGraph"],
+            dependencies: [
+                "SceneCore",
+                "SceneGraph",
+                .product(name: "PNG", package: "swift-png"),
+            ],
             swiftSettings: swiftSettings
         ),
         // OpenUSD: .usda, .usdc and .usdz.
