@@ -28,6 +28,9 @@ let package = Package(
         .executable(name: "scene-convert", targets: ["scene-convert"]),
         .executable(name: "scene-viewer", targets: ["scene-viewer"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/PureSwift/SDL.git", branch: "master"),
+    ],
     targets: [
         // Math, spatial primitives, ECS storage, mesh and material descriptors, and the renderer protocols.
         .target(
@@ -63,10 +66,13 @@ let package = Package(
             dependencies: ["SceneCore"],
             swiftSettings: swiftSettings
         ),
-        // The SDL3 host and render backend.
+        // The SDL3 host and OpenGL render backend.
         .target(
             name: "SceneSDL",
-            dependencies: ["SceneCore"],
+            dependencies: [
+                "SceneCore",
+                .product(name: "SDL3Swift", package: "SDL"),
+            ],
             swiftSettings: swiftSettings
         ),
         .executableTarget(
@@ -77,13 +83,28 @@ let package = Package(
         ),
         .executableTarget(
             name: "scene-viewer",
-            dependencies: ["SceneCore", "SceneGraph", "SceneFormats", "SceneSDL"],
+            dependencies: [
+                "SceneCore",
+                "SceneGraph",
+                "SceneFormats",
+                "SceneSDL",
+                .product(name: "SDL3Swift", package: "SDL"),
+            ],
             path: "Tools/scene-viewer",
             swiftSettings: swiftSettings
         ),
         .testTarget(
             name: "SceneCoreTests",
             dependencies: ["SceneCore"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "SceneSDLTests",
+            dependencies: [
+                "SceneCore",
+                "SceneSDL",
+                .product(name: "SDL3Swift", package: "SDL"),
+            ],
             swiftSettings: swiftSettings
         ),
         .testTarget(
