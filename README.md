@@ -31,7 +31,7 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneCore` | `Matrix4x4`, `Quaternion`, `Transform`, bounds, rays and frusta; polygon `Triangulation` with holes; the sparse-set `EntityStore`; `MeshBuffer`, `MaterialDescriptor`, light and camera descriptors; the `RenderBackend` and `FrameCommandBuffer` protocols |
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
-| `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order) and text, ported from Quesa; OBJ, glTF, Collada and SCN *(planned)* |
+| `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order) and text, ported from Quesa; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; glTF, Collada and SCN *(planned)* |
 | `SceneUSD` | USD stages, `.usda`, `.usdc` and `.usdz` through [apple/SwiftUsd](https://github.com/apple/SwiftUsd)'s OpenUSD, on Apple platforms *(planned)* |
 | `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
@@ -77,7 +77,7 @@ try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
 
 ## Viewer
 
-`scene-viewer [file.3dmf]` opens a window on a file, or on a demo scene without one: drag to orbit, scroll to zoom, W for wireframe, space to pause,
+`scene-viewer [file.3dmf | file.obj]` opens a window on a file, or on a demo scene without one: drag to orbit, scroll to zoom, W for wireframe, space to pause,
 R to reset the camera. `--snapshot <path.bmp>` draws one frame to a file, `--frames <n>` quits after n frames,
 and `--es` asks for OpenGL ES 3.0.
 
