@@ -3,8 +3,9 @@ import SceneCore
 
 /// Ties an entity to a body, so the simulation and the entity's transform agree.
 ///
-/// A dynamic body moves its entity; a kinematic or static one follows its entity. Transforms are in the space of
-/// the entity's parent, which for physics is the world: bodies belong on entities without a moving parent.
+/// A dynamic body moves its entity; a kinematic or static one follows its entity. Bodies live in world space, and
+/// entities in their parents': the two are converted through the parent's world transform, so a body may be on an
+/// entity anywhere in a hierarchy. An entity's own scale is its own: bodies don't scale.
 public struct PhysicsBodyComponent {
 
     public let body: PhysicsBody
@@ -16,24 +17,28 @@ public struct PhysicsBodyComponent {
 
 public extension PhysicsWorld {
 
-    /// Moves bodies that follow their entities to where the entities are: before a step.
+    /// Moves bodies that follow their entities to where the entities are in the world: before a step.
     func readTransforms(from store: EntityStore) {
         store.withStorage(PhysicsBodyComponent.self) { storage in
-            for (entity, component) in storage where component.body.type != .dynamic {
-                guard let local = store[LocalTransform.self, entity] else { continue }
-                component.body.transform = Transform(rotation: local.transform.rotation, translation: local.transform.translation)
+            for (entity, component) in storage where component.body.type != .dynamic && component.body.isValid {
+                let world = Transform(matrix: store.worldMatrix(of: entity))
+                component.body.transform = Transform(rotation: world.rotation, translation: world.translation)
             }
         }
     }
 
-    /// Moves entities to where their dynamic bodies are, keeping each entity's scale: after a step.
+    /// Moves entities to where their dynamic bodies are, in their parents' space: after a step.
     func writeTransforms(to store: EntityStore) {
         store.withStorage(PhysicsBodyComponent.self) { storage in
             for (entity, component) in storage where component.body.type == .dynamic && component.body.isValid {
-                let placed = component.body.transform
-                store.modify(LocalTransform.self, of: entity) { local in
-                    local.transform.translation = placed.translation
-                    local.transform.rotation = placed.rotation
+                var placed = component.body.transform.matrix
+                if let parent = store[Parent.self, entity]?.entity, store.isAlive(parent) {
+                    placed = (store.worldMatrix(of: parent).inverse ?? .identity) * placed
+                }
+                let local = Transform(matrix: placed)
+                store.modify(LocalTransform.self, of: entity) {
+                    $0.transform.translation = local.translation
+                    $0.transform.rotation = local.rotation
                 }
             }
         }
