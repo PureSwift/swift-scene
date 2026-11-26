@@ -2,21 +2,45 @@
 // Copyright (c) 1999-2021, Quesa Developers. All rights reserved.
 // Licensed under the BSD 3-Clause License; see LICENSE-Quesa.
 
+import BinaryParsing
+
 /// Reads the values of an object's data in order, whichever encoding it is in: big- or little-endian binary, or
 /// a text metafile's tokens. An object's reader asks for what it expects, as Quesa's read methods do.
+///
+/// Binary data is parsed with swift-binary-parsing: each read parses within the object's range of the file, which it
+/// advances, so nothing reads past the object and nothing is copied out of the file first.
 struct MetafileDataReader {
 
     private let data: MetafileObjectData
+    /// For binary data, what's left of the object's range.
+    private var range: ParserRange?
+    /// For text, the next token.
     private var position = 0
 
     init(_ data: MetafileObjectData) {
         self.data = data
+        if case .binary(let binary) = data { range = binary.range }
     }
 
     var isAtEnd: Bool {
         switch data {
-        case .binary(let bytes, _): position >= bytes.count
+        case .binary: range?.isEmpty ?? true
         case .text(let tokens): position >= tokens.count
+        }
+    }
+
+    /// Parses the next value of binary data, advancing past it.
+    private mutating func parse<T>(_ body: (inout ParserSpan, Endianness) throws(ParsingError) -> T) throws(SceneFormatError) -> T {
+        guard case .binary(let binary) = data, var remaining = range else { preconditionFailure("Binary only") }
+        let endianness: Endianness = binary.byteOrder == .bigEndian ? .big : .little
+        do {
+            let value = try binary.file.withParserSpan(usingRange: &remaining) { (span) throws(ParsingError) in
+                try body(&span, endianness)
+            }
+            range = remaining
+            return value
+        } catch {
+            throw SceneFormatError(error)
         }
     }
 
@@ -24,8 +48,8 @@ struct MetafileDataReader {
 
     mutating func uint32() throws(SceneFormatError) -> UInt32 {
         switch data {
-        case .binary(let bytes, let order):
-            return try fixedWidth(bytes, order, 4)
+        case .binary:
+            return try parse { (span, endianness) throws(ParsingError) in try UInt32(parsing: &span, endianness: endianness) }
         case .text:
             let value = try integer()
             guard let result = UInt32(exactly: value) ?? (value < 0 ? UInt32(bitPattern: Int32(truncatingIfNeeded: value)) : nil) else {
@@ -41,14 +65,14 @@ struct MetafileDataReader {
 
     mutating func uint16() throws(SceneFormatError) -> UInt16 {
         switch data {
-        case .binary(let bytes, let order): UInt16(try fixedWidth(bytes, order, 2))
+        case .binary: try parse { (span, endianness) throws(ParsingError) in try UInt16(parsing: &span, endianness: endianness) }
         case .text: UInt16(truncatingIfNeeded: try integer())
         }
     }
 
     mutating func uint8() throws(SceneFormatError) -> UInt8 {
         switch data {
-        case .binary(let bytes, let order): UInt8(try fixedWidth(bytes, order, 1))
+        case .binary: try parse { (span, _) throws(ParsingError) in try UInt8(parsing: &span) }
         case .text: UInt8(truncatingIfNeeded: try integer())
         }
     }
@@ -59,9 +83,9 @@ struct MetafileDataReader {
 
     mutating func uint64() throws(SceneFormatError) -> UInt64 {
         switch data {
-        case .binary(let bytes, let order):
-            let high = UInt64(try fixedWidth(bytes, order, 4)), low = UInt64(try fixedWidth(bytes, order, 4))
-            return order == .bigEndian ? high << 32 | low : low << 32 | high
+        case .binary:
+            // Two 32-bit words in the file's order, which is the order of a 64-bit number.
+            return try parse { (span, endianness) throws(ParsingError) in try UInt64(parsing: &span, endianness: endianness) }
         case .text:
             return UInt64(truncatingIfNeeded: try integer())
         }
@@ -69,8 +93,8 @@ struct MetafileDataReader {
 
     mutating func float32() throws(SceneFormatError) -> Float {
         switch data {
-        case .binary(let bytes, let order):
-            return Float(bitPattern: try fixedWidth(bytes, order, 4))
+        case .binary:
+            return Float(bitPattern: try uint32())
         case .text(let tokens):
             // Some writers separate numbers with commas, which Quesa's scanf-style reading stops at.
             let token = Self.number(try nextToken(tokens))
@@ -122,11 +146,18 @@ struct MetafileDataReader {
     /// A string: null-terminated and padded to four bytes in binary, quoted in text.
     mutating func string() throws(SceneFormatError) -> String {
         switch data {
-        case .binary(let bytes, _):
-            guard let end = bytes[position...].firstIndex(of: 0) else { throw .unexpectedEndOfData(offset: bytes.count) }
-            let string = String(decoding: bytes[position..<end], as: UTF8.self)
-            position = min(Self.padded(end + 1), bytes.count)
-            return string
+        case .binary(let binary):
+            let start = binary.range.lowerBound
+            return try parse { (span, _) throws(ParsingError) in
+                var utf8: [UInt8] = []
+                while true {
+                    let byte = try UInt8(parsing: &span)
+                    if byte == 0 { break }
+                    utf8.append(byte)
+                }
+                try Self.skipPadding(&span, objectStart: start)
+                return String(decoding: utf8, as: UTF8.self)
+            }
         case .text(let tokens):
             let token = try nextToken(tokens)
             guard token.count >= 2, token.first == "\"", token.last == "\"" else { return token }
@@ -137,11 +168,13 @@ struct MetafileDataReader {
     /// Raw bytes: `count` of them padded to four in binary, hexadecimal runs (`0x…`) in text.
     mutating func rawBytes(_ count: Int) throws(SceneFormatError) -> [UInt8] {
         switch data {
-        case .binary(let bytes, _):
-            guard position + count <= bytes.count else { throw .unexpectedEndOfData(offset: bytes.count) }
-            let raw = Array(bytes[position ..< position + count])
-            position = min(Self.padded(position + count), bytes.count)
-            return raw
+        case .binary(let binary):
+            let start = binary.range.lowerBound
+            return try parse { (span, _) throws(ParsingError) in
+                let raw = try span.sliceSpan(byteCount: count).withUnsafeBytes { Array($0) }
+                try Self.skipPadding(&span, objectStart: start)
+                return raw
+            }
         case .text(let tokens):
             var raw: [UInt8] = []
             raw.reserveCapacity(count)
@@ -168,15 +201,11 @@ struct MetafileDataReader {
 
     // MARK: Helpers
 
-    private mutating func fixedWidth(_ bytes: [UInt8], _ order: Metafile3D.ByteOrder, _ width: Int) throws(SceneFormatError) -> UInt32 {
-        guard position + width <= bytes.count else { throw .unexpectedEndOfData(offset: position) }
-        var value: UInt32 = 0
-        for i in 0..<width {
-            let byte = UInt32(bytes[position + (order == .bigEndian ? i : width - 1 - i)])
-            value = value << 8 | byte
-        }
-        position += width
-        return value
+    /// Moves past padding to the next multiple of four bytes from the object's start, as far as the object goes.
+    private static func skipPadding(_ span: inout ParserSpan, objectStart: Int) throws(ParsingError) {
+        let consumed = span.startPosition - objectStart
+        let padding = min(padded(consumed) - consumed, span.count)
+        if padding > 0 { try span.seek(toRelativeOffset: padding) }
     }
 
     private mutating func nextToken(_ tokens: [String]) throws(SceneFormatError) -> String {

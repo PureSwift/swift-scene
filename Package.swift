@@ -33,6 +33,8 @@ let package = Package(
         .package(url: "https://github.com/PureSwift/SDL.git", branch: "master"),
         // The Swift API is newer than the last tag.
         .package(url: "https://github.com/PureSwift/swift-png.git", branch: "master"),
+        // Pre-1.0: source-stable only within a minor version.
+        .package(url: "https://github.com/apple/swift-binary-parsing.git", .upToNextMinor(from: "0.0.4")),
     ],
     targets: [
         // Math, spatial primitives, ECS storage, mesh and material descriptors, and the renderer protocols.
@@ -59,6 +61,7 @@ let package = Package(
                 "SceneCore",
                 "SceneGraph",
                 .product(name: "PNG", package: "swift-png"),
+                .product(name: "BinaryParsing", package: "swift-binary-parsing"),
             ],
             swiftSettings: swiftSettings
         ),

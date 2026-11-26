@@ -390,3 +390,52 @@ private func binaryFixture(_ order: Metafile3D.ByteOrder) -> [UInt8] {
         #expect(try decode("PolyLine ( 0 )").isEmpty)
     }
 }
+
+@Suite struct BinaryMetafileRobustnessTests {
+
+    /// Every way a file can end early is an error, never a crash or a read past the end.
+    @Test(arguments: [Metafile3D.ByteOrder.bigEndian, .littleEndian])
+    func everyTruncationFailsCleanly(_ order: Metafile3D.ByteOrder) {
+        let file = binaryFixture(order)
+        for length in 0 ..< file.count {
+            let prefix = Array(file.prefix(length))
+            do {
+                let metafile = try Metafile3D(prefix)
+                _ = try? ThreeDMFDecoder().decodeScene(metafile)
+            } catch {}
+        }
+    }
+
+    /// Any one byte changed — sizes, offsets, counts — is read or rejected, never trusted past the data.
+    @Test func everyByteFlipIsSafe() {
+        let file = binaryFixture(.bigEndian)
+        for offset in file.indices {
+            for flip: UInt8 in [0xFF, 0x80, 0x01] {
+                var damaged = file
+                damaged[offset] ^= flip
+                if let metafile = try? Metafile3D(damaged) {
+                    _ = try? ThreeDMFDecoder().decodeScene(metafile)
+                }
+            }
+        }
+    }
+
+    @Test func sizePastTheEndIsAnError() throws {
+        var file = binaryFixture(.bigEndian)
+        // The first object's size, after the 24-byte header and its type.
+        file.replaceSubrange(28 ..< 32, with: [0x7F, 0xFF, 0xFF, 0xFF])
+        #expect(throws: SceneFormatError.self) { try Metafile3D(file) }
+    }
+
+    @Test func objectDataIsSharedNotCopied() throws {
+        let file = binaryFixture(.littleEndian)
+        let metafile = try Metafile3D(file)
+        guard case .binary(let data) = metafile.objects.first?.children.first?.data else {
+            Issue.record("Expected binary data")
+            return
+        }
+        // The translate's three floats, read in place from the file.
+        #expect(data.bytes.count == 12)
+        #expect(data.bytes.startIndex > 24)
+    }
+}
