@@ -15,7 +15,7 @@ import SDL3Swift
 //
 // Usage: scene-viewer [options] [file]
 //
-// With a file (.3dmf), shows it; without, a demo scene.
+// With a file (.3dmf or .obj), shows it; without, a demo scene.
 //
 // Options:
 //   --es               OpenGL ES 3.0 instead of OpenGL 3.3 Core
@@ -96,11 +96,16 @@ func loadScene(_ path: String) throws -> Scene {
         exit(1)
     }
     let ext = path.split(separator: ".").last.map { $0.lowercased() } ?? ""
-    guard ThreeDMFDecoder.fileExtensions.contains(ext) else {
+    let scene: Scene
+    if ThreeDMFDecoder.fileExtensions.contains(ext) {
+        scene = try ThreeDMFDecoder().decodeScene(bytes)
+    } else if WavefrontOBJDecoder.fileExtensions.contains(ext) {
+        let directory = path.lastIndex(of: "/").map { String(path[..<$0]) } ?? "."
+        scene = try WavefrontOBJDecoder(baseDirectory: directory, materialLibraryLoader: readFile).decodeScene(bytes)
+    } else {
         print("scene-viewer: no decoder for .\(ext) files")
         exit(1)
     }
-    let scene = try ThreeDMFDecoder().decodeScene(bytes)
     var hasLight = false
     scene.rootNode.enumerateHierarchy { node, stop in
         if node.light != nil { hasLight = true; stop = true }
