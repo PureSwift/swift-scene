@@ -3,6 +3,238 @@ import SceneCore
 import SceneGraph
 @testable import SceneFormats
 
+@Suite struct MetafileWritingTests {
+    private func compare(_ lhs: [MetafileObject], _ rhs: [MetafileObject]) {
+        #expect(lhs.count == rhs.count)
+        for (a, b) in zip(lhs, rhs) {
+            #expect(a.type == b.type)
+            switch (a.data, b.data) {
+            case (.binary(let x), .binary(let y)):
+                #expect(x.byteOrder == y.byteOrder)
+                #expect(Array(x.bytes) == Array(y.bytes))
+            case (.text(let x), .text(let y)):
+                #expect(x == y)
+            default:
+                Issue.record("Payload encoding changed")
+            }
+            compare(a.children, b.children)
+        }
+    }
+
+    @Test(arguments: [Metafile3D.Encoding.text, .binary(.bigEndian), .binary(.littleEndian)])
+    func fixtureRoundTrip(_ encoding: Metafile3D.Encoding) throws {
+        let bytes: [UInt8]
+        switch encoding {
+        case .text: bytes = Array(textFixture.utf8)
+        case .binary(let order): bytes = binaryFixture(order)
+        }
+        let original = try Metafile3D(bytes)
+        let written = try original.encoded()
+        let restored = try Metafile3D(written)
+        #expect(restored.encoding == original.encoding)
+        #expect(restored.majorVersion == original.majorVersion)
+        #expect(restored.minorVersion == original.minorVersion)
+        #expect(restored.mode == .normal)
+        compare(original.objects, restored.objects)
+        #expect(try restored.encoded() == written)
+        let before = try ThreeDMFDecoder(isStrict: true).decodeScene(bytes)
+        let after = try ThreeDMFDecoder(isStrict: true).decodeScene(written)
+        let beforeNodes = try #require(before.rootNode.children.first).children
+        let afterNodes = try #require(after.rootNode.children.first).children
+        #expect(beforeNodes.count == afterNodes.count)
+        for (a, b) in zip(beforeNodes, afterNodes) {
+            #expect(a.position == b.position)
+            #expect(a.name == b.name)
+            #expect(a.geometry?.mesh.positions == b.geometry?.mesh.positions)
+            #expect(a.geometry?.firstMaterial?.diffuse.contents == b.geometry?.firstMaterial?.diffuse.contents)
+        }
+    }
+
+    @Test func rejectsIncompatiblePayloads() throws {
+        var binary = try Metafile3D(binaryFixture(.bigEndian))
+        binary.encoding = .binary(.littleEndian)
+        #expect(throws: SceneFormatError.self) { try binary.encoded() }
+        binary.encoding = .text
+        #expect(throws: SceneFormatError.self) { try binary.encoded() }
+        var text = try Metafile3D(Array(textFixture.utf8))
+        text.encoding = .binary(.bigEndian)
+        #expect(throws: SceneFormatError.self) { try text.encoded() }
+    }
+
+    @Test func rejectsStructuralRecordsAndInvalidTokens() {
+        for object in [
+            MetafileObject(type: .reference, data: .text(["1"])),
+            MetafileObject(type: .cString, data: .text(["\"unterminated"])),
+            MetafileObject(type: .point, data: .text(["0", ")", "0"]))
+        ] {
+            let file = Metafile3D(encoding: .text, objects: [object])
+            #expect(throws: SceneFormatError.self) { try file.encoded() }
+        }
+    }
+
+    @Test func rejectsExcessiveNesting() {
+        var object = MetafileObject(type: .displayGroup, data: .empty)
+        for _ in 0..<128 {
+            object = MetafileObject(type: .displayGroup, data: .empty, children: [object])
+        }
+        #expect(throws: SceneFormatError.self) {
+            try Metafile3D(encoding: .text, objects: [object]).encoded()
+        }
+    }
+}
+
+
+@Suite struct ThreeDMFSceneExportTests {
+    @Test(arguments: [Metafile3D.Encoding.text, .binary(.bigEndian), .binary(.littleEndian)])
+    func preservesGeometryAndWorldPlacement(_ encoding: Metafile3D.Encoding) throws {
+        let scene = Scene()
+        scene.rootNode.position = [1, 2, 3]
+        let parent = Node(name: "parent")
+        parent.position = [4, 0, 0]
+        parent.scale = [2, 3, 4]
+        scene.rootNode.addChild(parent)
+        let geometry = Geometry.box()
+        geometry.materials = [
+            Material(.lambert(diffuse: [1, 0, 0, 1])),
+            Material(.lambert(diffuse: [0, 1, 0, 1]))
+        ]
+        let box = Node(name: "quoted \"box\"\\", geometry: geometry)
+        box.position = [0, 5, 0]
+        parent.addChild(box)
+        let sibling = Node(name: "sibling")
+        sibling.position = [-4, 0, 0]
+        sibling.isHidden = true
+        parent.addChild(sibling)
+        let output = try ThreeDMFEncoder(encoding: encoding).encodeScene(scene)
+        #expect(try Metafile3D(output).encoding == encoding)
+        let loaded = try ThreeDMFDecoder(isStrict: true).decodeScene(output)
+        let restored = try #require(loaded.rootNode.childNode(named: box.name!))
+        #expect(restored.worldTransform == box.worldTransform)
+        let restoredSibling = try #require(loaded.rootNode.childNode(named: "sibling"))
+        #expect(restoredSibling.worldTransform == sibling.worldTransform)
+        #expect(restoredSibling.isHidden)
+        var meshes: [Geometry] = []
+        restored.enumerateHierarchy { node, _ in
+            if let geometry = node.geometry { meshes.append(geometry) }
+        }
+        #expect(meshes.count == geometry.mesh.submeshes.count)
+        for (index, decoded) in meshes.enumerated() {
+            let submesh = geometry.mesh.submeshes[index]
+            let expected = geometry.mesh.triangles(in: submesh).flatMap { [$0.x, $0.y, $0.z] }
+            let actual = decoded.mesh.triangles(in: decoded.mesh.submeshes[0]).flatMap { [$0.x, $0.y, $0.z] }
+            #expect(actual.map { decoded.mesh.positions[$0] } == expected.map { geometry.mesh.positions[$0] })
+            for semantic in [VertexSemantic.normal, .textureCoordinate(0)] {
+                let before = try #require(geometry.mesh.stream(semantic))
+                let after = try #require(decoded.mesh.stream(semantic))
+                #expect(actual.map { Array(after[$0]) } == expected.map { Array(before[$0]) })
+            }
+            #expect(decoded.firstMaterial?.diffuse == geometry.materials[index % 2].diffuse)
+            #expect(decoded.firstMaterial?.lightingModel == .lambert)
+        }
+    }
+
+    @Test(arguments: [Metafile3D.Encoding.text, .binary(.bigEndian), .binary(.littleEndian)])
+    func supportsNonIndexedTriangleStripsAndMaterialProperties(_ encoding: Metafile3D.Encoding) async throws {
+        let mesh = MeshBuffer(vertexCount: 4, streams: [
+            VertexStream(semantic: .position, vectors: [
+                SIMD3<Float>(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0), SIMD3(1, 1, 0)
+            ])
+        ], submeshes: [Submesh(primitive: .triangleStrip, range: 0..<4, materialIndex: 0)])
+        var descriptor = MaterialDescriptor(lightingModel: .phong)
+        descriptor.shininess = 0.5
+        descriptor.transparency = 0.25
+        descriptor.specular = .color([0.3, 0.4, 0.5, 1])
+        descriptor.emission = .color([0.1, 0.2, 0.3, 1])
+        descriptor.isDoubleSided = true
+        let scene = Scene()
+        scene.rootNode.addChild(Node(geometry: Geometry(mesh: mesh, materials: [Material(descriptor)])))
+        let encoder: any SceneAssetEncoder = ThreeDMFEncoder(encoding: encoding)
+        let restored = try ThreeDMFDecoder(isStrict: true).decodeScene(await encoder.encode(scene))
+        var result: Geometry?
+        restored.rootNode.enumerateHierarchy { node, _ in
+            if let geometry = node.geometry { result = geometry }
+        }
+        let geometry = try #require(result)
+        #expect(geometry.mesh.vertexCount == 6)
+        let material = try #require(geometry.firstMaterial?.descriptor)
+        #expect(material.shininess == descriptor.shininess)
+        #expect(material.transparency == descriptor.transparency)
+        #expect(material.specular == descriptor.specular)
+        #expect(material.emission == descriptor.emission)
+        #expect(material.isDoubleSided)
+    }
+
+
+    @Test(arguments: [255, 256, 65535, 65536], [Metafile3D.ByteOrder.bigEndian, .littleEndian])
+    func binaryIndexWidths(_ pointCount: Int, _ order: Metafile3D.ByteOrder) throws {
+        var positions = [SIMD3<Float>](repeating: .zero, count: pointCount)
+        positions[pointCount - 2] = [1, 0, 0]
+        positions[pointCount - 1] = [0, 1, 0]
+        let mesh = MeshBuffer(vertexCount: pointCount,
+            streams: [VertexStream(semantic: .position, vectors: positions)],
+            indices: IndexBuffer([0, pointCount - 2, pointCount - 1]),
+            submeshes: [Submesh(range: 0..<3, materialIndex: 0)])
+        let scene = Scene()
+        scene.rootNode.addChild(Node(name: "é \"mesh\"\\", geometry: Geometry(mesh: mesh)))
+        let output = try ThreeDMFEncoder(encoding: .binary(order)).encodeScene(scene)
+        #expect(Array(output.prefix(4)) == Array((order == .bigEndian ? "3DMF" : "FMD3").utf8))
+        // Header size, version 1.6, normal mode and no TOC, independently of the reader.
+        let header: [UInt8] = [0, 0, 0, 16, 0, 1, 0, 6, 0, 0, 0, 0]
+        let expectedHeader = order == .bigEndian ? header
+            : stride(from: 0, to: header.count, by: 4).flatMap { Array(header[$0..<$0 + 4].reversed()) }
+        #expect(Array(output[4..<16]) == expectedHeader)
+        #expect(Array(output[16..<24]) == Array(repeating: UInt8(0), count: 8))
+        let file = try Metafile3D(output)
+        func findMesh(_ objects: [MetafileObject]) -> MetafileObject? {
+            for object in objects {
+                if object.type == .triMesh { return object }
+                if let found = findMesh(object.children) { return found }
+            }
+            return nil
+        }
+        let object = try #require(findMesh(file.objects))
+        guard case .binary(let data) = object.data else {
+            Issue.record("Expected binary mesh")
+            return
+        }
+        let width = pointCount < 256 ? 1 : pointCount < 65536 ? 2 : 4
+        #expect(data.bytes.count == 24 + 3 * width + 12 * pointCount + 28)
+        let expectedIndices = [0, pointCount - 2, pointCount - 1].flatMap { value in
+            (0..<width).map { index in
+                UInt8(truncatingIfNeeded: value >> ((order == .bigEndian ? width - 1 - index : index) * 8))
+            }
+        }
+        #expect(Array(data.bytes.dropFirst(24).prefix(3 * width)) == expectedIndices)
+        let restored = try ThreeDMFDecoder(isStrict: true).decodeScene(output)
+        #expect(restored.rootNode.childNode(named: "é \"mesh\"\\") != nil)
+        var restoredMesh: MeshBuffer?
+        restored.rootNode.enumerateHierarchy { node, _ in
+            if let geometry = node.geometry { restoredMesh = geometry.mesh }
+        }
+        #expect(try #require(restoredMesh).positions == [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)])
+    }
+
+    @Test func rejectsUnsupportedAndMalformedScenes() {
+        let scene = Scene()
+        let geometry = Geometry.box()
+        let node = Node(geometry: geometry)
+        scene.rootNode.addChild(node)
+        node.camera = Camera()
+        #expect(throws: SceneFormatError.self) { try ThreeDMFEncoder().encodeScene(scene) }
+        node.camera = nil
+        geometry.materials = [Material(.physicallyBased())]
+        #expect(throws: SceneFormatError.self) { try ThreeDMFEncoder().encodeScene(scene) }
+        geometry.materials = [Material()]
+        geometry.materials[0].diffuse = .texture(.path("missing.png"))
+        #expect(throws: SceneFormatError.self) { try ThreeDMFEncoder().encodeScene(scene) }
+        geometry.materials = []
+        var malformed = geometry.mesh
+        malformed.submeshes[0].range = 0..<Int.max
+        node.geometry = Geometry(mesh: malformed)
+        #expect(throws: SceneFormatError.self) { try ThreeDMFEncoder().encodeScene(scene) }
+    }
+}
+
 // MARK: - Fixtures
 
 /// A text metafile: a group moved by a translate, holding a named, red, textured quad that a reference shares.
