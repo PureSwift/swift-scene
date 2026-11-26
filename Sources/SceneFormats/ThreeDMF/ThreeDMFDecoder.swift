@@ -9,8 +9,8 @@ import SceneGraph
 ///
 /// The objects are submitted in order as QuickDraw 3D would draw them: transforms, attribute sets and shaders
 /// change the state for what follows in the same group; each group is a node, its state its own; each geometry
-/// is a node placed by the transforms before it. Geometry is TriMesh, Triangle, Polygon and Box so far; other
-/// objects are skipped.
+/// is a node placed by the transforms before it. Geometry is TriMesh, Triangle, Polygon, Box and the quadrics
+/// (Ellipsoid, Cone, Cylinder, Disk, Torus) so far; other objects are skipped.
 public struct ThreeDMFDecoder: SceneAssetDecoder {
 
     public static let fileExtensions = ["3dmf", "3dm", "q3d"]
@@ -44,6 +44,18 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
         var transform = Matrix4x4.identity
         var attributes = Attributes()
         var lightingModel: LightingModel?
+        var subdivision = Subdivision.default
+    }
+
+    /// How finely curved surfaces are cut into triangles.
+    enum Subdivision {
+        /// So many segments round (u) and along (v).
+        case constant(u: Int, v: Int)
+        /// A segment for every so much length, in world space.
+        case worldSpace(Float)
+
+        /// Quesa's fallback, since it draws QuickDraw 3D's default screen-space style this way.
+        static let `default` = Subdivision.constant(u: 16, v: 8)
     }
 
     /// An attribute set's values; nil for those it doesn't set.
@@ -110,11 +122,21 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
             state.lightingModel = .lambert
         case .nullIllumination, .nondirectionalIllumination:
             state.lightingModel = .unlit
-        case .triMesh, .triangle, .polygon, .box:
-            let (mesh, own) = try geometry(object)
-            let attributes = own.over(state.attributes)
+        case .subdivisionStyle:
+            var r = object.reader()
+            let method = try r.enumerated(["constant": 0, "worldspace": 1, "screenspace": 2])
+            let c1 = try r.float32()
+            let c2 = r.isAtEnd ? c1 : try r.float32()
+            switch method {
+            case 0: state.subdivision = .constant(u: max(Int(c1), 3), v: max(Int(c2), 3))
+            case 1 where c1 > 0: state.subdivision = .worldSpace(c1)
+            default: state.subdivision = .default
+            }
+        case .triMesh, .triangle, .polygon, .box, .ellipsoid, .cone, .cylinder, .disk, .torus:
+            let (mesh, own, parts) = try geometry(object, state: state)
             let hasColors = mesh.stream(.color) != nil
-            let geometry = Geometry(mesh: mesh, materials: [Material(material(attributes, state: state, hasVertexColors: hasColors))])
+            let materials = parts.map { Material(material($0.over(state.attributes), state: state, hasVertexColors: hasColors)) }
+            let geometry = Geometry(mesh: mesh, materials: materials)
             let node = Node(name: own.name ?? Self.name(in: object.children), geometry: geometry)
             node.transform = state.transform
             parent.addChild(node)
@@ -248,21 +270,91 @@ public struct ThreeDMFDecoder: SceneAssetDecoder {
 
     // MARK: Geometry
 
-    private func geometry(_ object: MetafileObject) throws(SceneFormatError) -> (MeshBuffer, Attributes) {
+    /// A geometry's mesh, its own attributes, and the attributes of each of its parts, in material order.
+    private func geometry(_ object: MetafileObject, state: State) throws(SceneFormatError) -> (MeshBuffer, Attributes, [Attributes]) {
         var own = Attributes()
         for child in object.children where child.type == .attributeSet {
             own = try attributes(child).over(own)
         }
         own.name = own.name ?? Self.name(in: object.children)
-        let mesh: MeshBuffer
         switch object.type {
-        case .triMesh: mesh = try triMesh(object)
-        case .triangle: mesh = try polygon(object, count: 3)
-        case .polygon: mesh = try polygon(object, count: nil)
-        case .box: mesh = try box(object)
-        default: mesh = .empty
+        case .triMesh: return (try triMesh(object), own, [own])
+        case .triangle: return (try polygon(object, count: 3), own, [own])
+        case .polygon: return (try polygon(object, count: nil), own, [own])
+        case .box: return (try box(object), own, [own])
+        default: break
         }
-        return (mesh, own)
+        // A quadric: its face and caps may each have attributes of their own, over the geometry's.
+        let surface = try quadric(object)
+        func capAttributes(_ type: MetafileObjectType) throws(SceneFormatError) -> Attributes {
+            var cap = Attributes()
+            for set in object.children where set.type == type {
+                for child in set.children where child.type == .attributeSet {
+                    cap = try attributes(child).over(cap)
+                }
+            }
+            return cap.over(own)
+        }
+        let parts: [Attributes] = [
+            try capAttributes(.faceCapAttributeSet),
+            try capAttributes(.topCapAttributeSet),
+            try capAttributes(.bottomCapAttributeSet),
+            try capAttributes(.interiorCapAttributeSet),
+        ]
+        let (u, v) = segments(for: surface, state: state)
+        return (surface.makeMesh(uSegments: u, vSegments: v), own, parts)
+    }
+
+    /// An Ellipsoid, Cone, Cylinder or Torus: orientation, major radius, minor radius, origin (a Torus then its
+    /// ratio); a Disk has no orientation. Then the parameter ranges, which may be left out, and a Caps child.
+    private func quadric(_ object: MetafileObject) throws(SceneFormatError) -> QuadricSurface {
+        var r = object.reader()
+        let kind: QuadricSurface.Kind
+        switch object.type {
+        case .ellipsoid: kind = .ellipsoid
+        case .cone: kind = .cone
+        case .cylinder: kind = .cylinder
+        case .disk: kind = .disk
+        default: kind = .torus(ratio: 1)
+        }
+        var surface = QuadricSurface(kind)
+        guard !r.isAtEnd else { return withCaps(surface, object) }
+        if kind != .disk { surface.orientation = try r.vector3() }
+        surface.majorRadius = try r.vector3()
+        surface.minorRadius = try r.vector3()
+        surface.origin = try r.vector3()
+        if case .torus = kind { surface.kind = .torus(ratio: r.isAtEnd ? 1 : try r.float32()) }
+        if !r.isAtEnd { surface.uMin = try r.float32() }
+        if !r.isAtEnd { surface.uMax = try r.float32() }
+        if !r.isAtEnd { surface.vMin = try r.float32() }
+        if !r.isAtEnd { surface.vMax = try r.float32() }
+        return withCaps(surface, object)
+    }
+
+    private func withCaps(_ surface: QuadricSurface, _ object: MetafileObject) -> QuadricSurface {
+        var surface = surface
+        for child in object.children where child.type == .caps {
+            var r = child.reader()
+            if let mask = try? r.enumerated(["none": 0, "top": 1, "bottom": 2, "interior": 4]) {
+                surface.caps = QuadricSurface.Caps(rawValue: mask)
+            }
+        }
+        return surface
+    }
+
+    /// The segments for a surface under the subdivision style. A world-space style divides the radii's and the
+    /// axis's lengths, as transformed, by its length, as Quesa does.
+    private func segments(for surface: QuadricSurface, state: State) -> (Int, Int) {
+        switch state.subdivision {
+        case .constant(let u, let v):
+            return (u, v)
+        case .worldSpace(let length):
+            let m = state.transform
+            let radius = max(m.transformDirection(surface.majorRadius).length, m.transformDirection(surface.minorRadius).length)
+            let axis = max(radius, m.transformDirection(surface.orientation).length)
+            let u = Int(2 * Float.pi * radius / length), v = Int(Float.pi * axis / length)
+            return (min(max(u, 3), 256), min(max(v, 3), 256))
+        }
     }
 
     /// A TriMesh: counts, triangles, edges, points and bounds, then its attribute arrays as children.
