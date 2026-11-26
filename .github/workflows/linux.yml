@@ -1,0 +1,76 @@
+name: Linux
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  SWIFT_VERSION: 6.4.2
+  # Box3D at a commit the physics tests pass against.
+  BOX3D_COMMIT: 042be585b58d7eebcafecb287053d2448c116b06
+
+jobs:
+  test:
+    name: Debian 13 (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # Debian 13 packages SDL3; Ubuntu 24.04 doesn't.
+    container: debian:trixie
+    steps:
+      - name: Install packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git gnupg2 unzip tzdata binutils pkg-config cmake make gcc g++ \
+            libc6-dev libgcc-14-dev libstdc++-14-dev libcurl4-openssl-dev libedit2 libpython3-dev \
+            libsqlite3-0 libxml2-dev libncurses-dev libz3-dev zlib1g-dev \
+            libsdl3-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Install Swift
+        run: |
+          curl -fsSL -o swiftly.tar.gz "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar -xzf swiftly.tar.gz
+          ./swiftly init --assume-yes --quiet-shell-followup --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install "$SWIFT_VERSION" --use --assume-yes
+          echo "$HOME/.local/share/swiftly/bin" >> "$GITHUB_PATH"
+          swift --version
+
+      - name: Cache Box3D
+        id: box3d
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/box3d
+          key: box3d-${{ matrix.arch }}-${{ env.BOX3D_COMMIT }}
+
+      - name: Build Box3D
+        if: steps.box3d.outputs.cache-hit != 'true'
+        run: |
+          git init box3d-src
+          git -C box3d-src fetch --depth 1 https://github.com/erincatto/box3d.git "$BOX3D_COMMIT"
+          git -C box3d-src checkout --quiet FETCH_HEAD
+          cmake -S box3d-src -B box3d-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local/box3d" \
+            -DBOX3D_SAMPLES=OFF -DBOX3D_UNIT_TESTS=OFF -DBOX3D_BENCHMARKS=OFF -DBOX3D_VALIDATE=OFF -DBOX3D_DOCS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          cmake --build box3d-build -j "$(nproc)"
+          cmake --install box3d-build
+
+      - name: Build
+        run: |
+          export PKG_CONFIG_PATH="$HOME/.local/box3d/lib/pkgconfig"
+          swift build --build-tests
+
+      - name: Test
+        run: |
+          export PKG_CONFIG_PATH="$HOME/.local/box3d/lib/pkgconfig"
+          swift test --skip-build
