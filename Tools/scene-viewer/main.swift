@@ -153,7 +153,9 @@ func run() throws {
 
     let scene = try options.file.map(loadScene) ?? makeScene()
     let renderer = SceneRenderer(backend: backend, scene: scene)
-    let cameraNode = scene.rootNode.childNode(named: "camera")!
+    // The viewer's own camera, which the orbit moves, rather than any a file brings.
+    let cameraNode = scene.rootNode.children.last { $0.name == "camera" }!
+    renderer.pointOfView = cameraNode
     let initialOrbit = options.file == nil ? OrbitCamera(target: [0.6, 0.4, 0]) : framing(scene)
     var orbit = initialOrbit
     if let view = options.view {
