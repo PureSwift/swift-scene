@@ -439,3 +439,125 @@ private func binaryFixture(_ order: Metafile3D.ByteOrder) -> [UInt8] {
         #expect(data.bytes.startIndex > 24)
     }
 }
+
+@Suite struct ThreeDMFViewTests {
+
+    private func decode(_ text: String) throws -> Scene {
+        try ThreeDMFDecoder(isStrict: true).decodeScene(Array(("3DMetafile ( 1 6 Normal )\n" + text).utf8))
+    }
+
+    private func isClose(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Bool { (a - b).length < 1e-4 }
+
+    @Test func lights() throws {
+        let scene = try decode("""
+        Container ( AmbientLight ( ) LightData ( True 0.25 1 1 1 ) )
+        Container ( DirectionalLight ( 0 -1 0 False ) LightData ( True 1 1 0.5 0 ) )
+        Container ( PointLight ( 1 2 3 InverseSquare True ) LightData ( True 0.5 1 1 1 ) )
+        Container ( SpotLight ( 0 5 0  0 -1 0  False None 0.2 0.4 0 ) LightData ( True 1 1 1 1 ) )
+        Container ( PointLight ( 0 0 0 0 False ) LightData ( False 1 1 1 1 ) )
+        """)
+        let lights = scene.rootNode.children.compactMap(\.light)
+        // The light that's off isn't made.
+        #expect(lights.map(\.kind) == [.ambient, .directional, .omni, .spot])
+        #expect(lights[0].intensity == 250)
+        #expect(lights[1].color == SIMD3(1, 0.5, 0))
+        #expect(lights[2].castsShadow)
+        #expect(abs(lights[3].spotOuterAngle - degrees(radians: 0.8)) < 1e-4)
+        // A directional light shines down its node's -z, which points along its direction.
+        let sun = scene.rootNode.children[1]
+        #expect(isClose(sun.worldTransform.transformDirection(SIMD3(0, 0, -1)), SIMD3(0, -1, 0)))
+        #expect(scene.rootNode.children[2].position == SIMD3(1, 2, 3))
+    }
+
+    @Test func viewHintsCameraAndBackground() throws {
+        let scene = try decode("""
+        Container (
+            ViewHints ( )
+            Container (
+                ViewAngleCamera ( 0.7853982 1.5 )
+                CameraPlacement ( 0 0 5  0 0 0  0 1 0 )
+                CameraRange ( 0.5 50 )
+            )
+            ImageClearColor ( 0.2 0.3 0.4 )
+        )
+        """)
+        let node = try #require(scene.firstCameraNode)
+        let camera = try #require(node.camera)
+        #expect(abs(camera.fieldOfView - 45) < 1e-3)
+        #expect(camera.projectionDirection == .vertical)
+        #expect(camera.zNear == 0.5 && camera.zFar == 50)
+        #expect(node.position == SIMD3(0, 0, 5))
+        // Looking at the origin: down -z.
+        #expect(isClose(node.worldTransform.transformDirection(SIMD3(0, 0, -1)), SIMD3(0, 0, -1)))
+        #expect(scene.background.color == SIMD4(0.2, 0.3, 0.4, 1))
+    }
+
+    @Test func orthographicCamera() throws {
+        let scene = try decode("OrthographicCamera ( -2 3 2 -3 )")
+        let camera = try #require(scene.firstCameraNode?.camera)
+        #expect(camera.usesOrthographicProjection)
+        #expect(camera.orthographicScale == 3)
+    }
+
+    @Test func backfacingAndOrientation() throws {
+        let triangle = "Triangle ( 0 0 0 1 0 0 0 1 0 )"
+        let both = try decode(triangle)
+        #expect(both.rootNode.children.first?.geometry?.firstMaterial?.isDoubleSided == true)
+        let culled = try decode("BackfacingStyle ( Culled )\n" + triangle)
+        let material = try #require(culled.rootNode.children.first?.geometry?.firstMaterial)
+        #expect(!material.isDoubleSided && material.cullMode == .back)
+        let clockwise = try decode("BackfacingStyle ( Culled )\nOrientationStyle ( Clockwise )\n" + triangle)
+        #expect(clockwise.rootNode.children.first?.geometry?.firstMaterial?.cullMode == .front)
+    }
+
+    @Test func fillStyles() throws {
+        let edges = try decode("FillStyle ( Edges )\nBox ( )")
+        let mesh = try #require(edges.rootNode.children.first?.geometry?.mesh)
+        #expect(mesh.submeshes.allSatisfy { $0.primitive == .lines })
+        // A box's 12 triangles have 18 distinct edges: 12 sides and 6 diagonals.
+        #expect(mesh.submeshes.reduce(0) { $0 + $1.range.count } == 36)
+        #expect(edges.rootNode.children.first?.geometry?.firstMaterial?.lightingModel == .unlit)
+        let points = try decode("FillStyle ( Points )\nTriangle ( 0 0 0 1 0 0 0 1 0 )")
+        #expect(points.rootNode.children.first?.geometry?.mesh.submeshes.first?.primitive == .points)
+    }
+
+    @Test func textureBoundariesAndTransform() throws {
+        let scene = try decode("""
+        Container (
+            TextureShader ( )
+            PixmapTexture ( 1 1 4 32 RGB32 BigEndian BigEndian 0x00FF0000 )
+            Shader ( Clamp Mirror )
+            ShaderUVTransform ( 2 0 0  0 2 0  0 0 1 )
+        )
+        Triangle ( 0 0 0 1 0 0 0 1 0 )
+        """)
+        let diffuse = try #require(scene.rootNode.children.first?.geometry?.firstMaterial?.diffuse)
+        #expect(diffuse.sampler.wrapS == .clamp && diffuse.sampler.wrapT == .mirror)
+        // Doubling QuickDraw 3D's u and v doubles ours, about our v's flip: (0, 1) stays put.
+        #expect(diffuse.contentsTransform.transformPoint(SIMD3(0.5, 0.25, 0)) == SIMD3(1, -0.5, 0))
+        #expect(diffuse.contentsTransform.transformPoint(SIMD3(0, 1, 0)) == SIMD3(0, 1, 0))
+    }
+
+    @Test func hiddenDisplayGroup() throws {
+        let scene = try decode("""
+        BeginGroup ( DisplayGroup ( ) DisplayGroupState ( DoNotDraw ) )
+        Triangle ( 0 0 0 1 0 0 0 1 0 )
+        EndGroup ( )
+        """)
+        #expect(scene.rootNode.children.first?.isHidden == true)
+    }
+}
+
+extension ThreeDMFViewTests {
+
+    @Test func pointsAndMarkers() throws {
+        let scene = try ThreeDMFDecoder(isStrict: true).decodeScene(Array("""
+        3DMetafile ( 1 6 Normal )
+        Point ( 1 2 3 )
+        Marker ( 0 1 0  0 0  8 8 1 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 )
+        """.utf8))
+        #expect(scene.rootNode.children.count == 2)
+        #expect(scene.rootNode.children.first?.geometry?.mesh.positions == [SIMD3(1, 2, 3)])
+        #expect(scene.rootNode.children.last?.geometry?.mesh.submeshes.first?.primitive == .points)
+    }
+}
