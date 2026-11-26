@@ -1,0 +1,96 @@
+// swift-tools-version: 6.4
+
+import PackageDescription
+
+/// Pure-Swift modules build in the Swift 6 language mode, with complete concurrency checking.
+let swiftSettings: [SwiftSetting] = [
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+]
+
+let package = Package(
+    name: "swift-scene",
+    platforms: [
+        .macOS(.v13),
+        .iOS(.v16),
+        .tvOS(.v16),
+        .watchOS(.v9),
+        .visionOS(.v1),
+    ],
+    products: [
+        .library(name: "SceneCore", targets: ["SceneCore"]),
+        .library(name: "SceneGraph", targets: ["SceneGraph"]),
+        .library(name: "SceneReality", targets: ["SceneReality"]),
+        .library(name: "SceneFormats", targets: ["SceneFormats"]),
+        .library(name: "SceneUSD", targets: ["SceneUSD"]),
+        .library(name: "ScenePhysics", targets: ["ScenePhysics"]),
+        .library(name: "SceneSDL", targets: ["SceneSDL"]),
+        .executable(name: "scene-convert", targets: ["scene-convert"]),
+        .executable(name: "scene-viewer", targets: ["scene-viewer"]),
+    ],
+    targets: [
+        // Math, spatial primitives, ECS storage, mesh and material descriptors, and the renderer protocols.
+        .target(
+            name: "SceneCore",
+            swiftSettings: swiftSettings
+        ),
+        // The SceneKit-style retained scene graph.
+        .target(
+            name: "SceneGraph",
+            dependencies: ["SceneCore"],
+            swiftSettings: swiftSettings
+        ),
+        // The RealityKit-style ECS surface.
+        .target(
+            name: "SceneReality",
+            dependencies: ["SceneCore"],
+            swiftSettings: swiftSettings
+        ),
+        // Asset codecs: 3DMF, OBJ, glTF, Collada, SCN.
+        .target(
+            name: "SceneFormats",
+            dependencies: ["SceneCore", "SceneGraph"],
+            swiftSettings: swiftSettings
+        ),
+        // OpenUSD: .usda, .usdc and .usdz.
+        .target(
+            name: "SceneUSD",
+            dependencies: ["SceneCore", "SceneGraph", "SceneReality", "SceneFormats"],
+            swiftSettings: swiftSettings
+        ),
+        .target(
+            name: "ScenePhysics",
+            dependencies: ["SceneCore"],
+            swiftSettings: swiftSettings
+        ),
+        // The SDL3 host and render backend.
+        .target(
+            name: "SceneSDL",
+            dependencies: ["SceneCore"],
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "scene-convert",
+            dependencies: ["SceneCore", "SceneGraph", "SceneFormats", "SceneUSD"],
+            path: "Tools/scene-convert",
+            swiftSettings: swiftSettings
+        ),
+        .executableTarget(
+            name: "scene-viewer",
+            dependencies: ["SceneCore", "SceneGraph", "SceneFormats", "SceneSDL"],
+            path: "Tools/scene-viewer",
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "SceneCoreTests",
+            dependencies: ["SceneCore"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "SceneGraphTests",
+            dependencies: ["SceneCore", "SceneGraph"],
+            swiftSettings: swiftSettings
+        ),
+    ],
+    swiftLanguageModes: [.v6]
+)
