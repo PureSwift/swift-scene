@@ -12,7 +12,7 @@ one data-oriented core, with asset codecs (3DMF, OBJ, glTF, Collada, SCN, USD) a
 | `SceneFormats` | Asset codecs: 3DMF (from Quesa), OBJ, glTF, Collada, SCN *(planned)* |
 | `SceneUSD` | `.usda`, `.usdc` and `.usdz` *(planned)* |
 | `ScenePhysics` | Rigid bodies and collision *(planned)* |
-| `SceneSDL` | The SDL3 window host and OpenGL / Vulkan backend *(planned)* |
+| `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
 Conventions: right-handed, y up, cameras and lights look down -z, angles in radians (camera field of view and spot
 angles in degrees, as SceneKit's). Matrices are column-major acting on column vectors; `Matrix4x4(quickDraw3D:)`
@@ -29,4 +29,16 @@ let scene = Scene {
 let renderer = SceneRenderer(backend: HeadlessRenderBackend(), scene: scene)
 renderer.update(by: .milliseconds(16))
 try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
+```
+
+## Viewer
+
+`scene-viewer` opens a window on a demo scene: drag to orbit, scroll to zoom, W for wireframe, space to pause,
+R to reset the camera. `--snapshot <path.bmp>` draws one frame to a file, `--frames <n>` quits after n frames,
+and `--es` asks for OpenGL ES 3.0.
+
+It needs SDL3: `brew install sdl3` on macOS, `apt install libsdl3-dev` on Debian and Ubuntu.
+
+```sh
+swift run scene-viewer
 ```
