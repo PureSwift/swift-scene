@@ -135,6 +135,9 @@ public extension MetafileObjectType {
     static let line = MetafileObjectType("line")
     static let polyLine = MetafileObjectType("plyl")
     static let ellipse = MetafileObjectType("elps")
+    static let point = MetafileObjectType("pnt ")
+    static let marker = MetafileObjectType("mrkr")
+    static let pixmapMarker = MetafileObjectType("mrkp")
     static let generalPolygonHint = MetafileObjectType("gplh")
     static let meshCorners = MetafileObjectType("crnr")
     static let meshEdges = MetafileObjectType("edge")
@@ -154,6 +157,31 @@ public extension MetafileObjectType {
 
     // Styles
     static let subdivisionStyle = MetafileObjectType("sbdv")
+    static let backfacingStyle = MetafileObjectType("bckf")
+    static let orientationStyle = MetafileObjectType("ofdr")
+    static let fillStyle = MetafileObjectType("fist")
+    static let interpolationStyle = MetafileObjectType("intp")
+    static let castShadowsStyle = MetafileObjectType("cash")
+
+    // Lights
+    static let ambientLight = MetafileObjectType("ambn")
+    static let directionalLight = MetafileObjectType("drct")
+    static let pointLight = MetafileObjectType("pntl")
+    static let spotLight = MetafileObjectType("spot")
+    static let lightData = MetafileObjectType("lida")
+
+    // Cameras and view hints
+    static let orthographicCamera = MetafileObjectType("orth")
+    static let viewPlaneCamera = MetafileObjectType("vwpl")
+    static let viewAngleCamera = MetafileObjectType("vana")
+    static let cameraPlacement = MetafileObjectType("cmpl")
+    static let cameraRange = MetafileObjectType("cmrg")
+    static let cameraViewPort = MetafileObjectType("cmvp")
+    static let imageClearColor = MetafileObjectType("imcc")
+    static let imageDimensions = MetafileObjectType("imdm")
+
+    /// A shader's UV boundaries, as a texture shader's child: wrap, clamp or mirror.
+    static let shader = MetafileObjectType("shdr")
     static let attributeArray = MetafileObjectType("atar")
 
     // Transforms
@@ -200,13 +228,23 @@ public extension MetafileObjectType {
         ("DisplayGroupState", .displayGroupState), ("DisplayGroupBBox", .displayGroupBoundingBox),
         ("TriMesh", .triMesh), ("Triangle", .triangle), ("Polygon", .polygon), ("Box", .box),
         ("GeneralPolygon", .generalPolygon), ("Mesh", .mesh), ("TriGrid", .triGrid), ("NURBCurve", .nurbCurve),
-        ("NURBPatch", .nurbPatch), ("Line", .line), ("PolyLine", .polyLine), ("Ellipse", .ellipse), ("GeneralPolygonHint", .generalPolygonHint),
+        ("NURBPatch", .nurbPatch), ("Line", .line), ("PolyLine", .polyLine), ("Ellipse", .ellipse), ("Point", .point),
+        ("Marker", .marker), ("PixmapMarker", .pixmapMarker), ("GeneralPolygonHint", .generalPolygonHint),
         ("MeshCorners", .meshCorners), ("MeshEdges", .meshEdges), ("FaceAttributeSetList", .faceAttributeSetList),
         ("VertexAttributeSetList", .vertexAttributeSetList), ("GeometryAttributeSetList", .geometryAttributeSetList),
         ("Ellipsoid", .ellipsoid), ("Cone", .cone), ("Cylinder", .cylinder), ("Disk", .disk), ("Torus", .torus),
         ("Caps", .caps), ("TopCapAttributeSet", .topCapAttributeSet), ("BottomCapAttributeSet", .bottomCapAttributeSet),
         ("FaceCapAttributeSet", .faceCapAttributeSet), ("InteriorCapAttributeSet", .interiorCapAttributeSet),
-        ("SubdivisionStyle", .subdivisionStyle), ("AttributeArray", .attributeArray),
+        ("SubdivisionStyle", .subdivisionStyle), ("BackfacingStyle", .backfacingStyle),
+        ("OrientationStyle", .orientationStyle), ("FillStyle", .fillStyle), ("InterpolationStyle", .interpolationStyle),
+        ("CastShadowsStyle", .castShadowsStyle),
+        ("AmbientLight", .ambientLight), ("DirectionalLight", .directionalLight), ("PointLight", .pointLight),
+        ("SpotLight", .spotLight), ("LightData", .lightData),
+        ("OrthographicCamera", .orthographicCamera), ("ViewPlaneCamera", .viewPlaneCamera),
+        ("ViewAngleCamera", .viewAngleCamera), ("ViewAngleAspectCamera", .viewAngleCamera),
+        ("CameraPlacement", .cameraPlacement), ("CameraRange", .cameraRange), ("CameraViewPort", .cameraViewPort),
+        ("ImageClearColor", .imageClearColor), ("ImageDimensions", .imageDimensions), ("ViewHint", .viewHints),
+        ("Shader", .shader), ("AttributeArray", .attributeArray),
         ("Matrix", .matrixTransform), ("Scale", .scaleTransform), ("Translate", .translateTransform),
         ("Rotate", .rotateTransform), ("RotateAboutPoint", .rotateAboutPointTransform),
         ("RotateAboutAxis", .rotateAboutAxisTransform), ("Quaternion", .quaternionTransform), ("Reset", .resetTransform),
