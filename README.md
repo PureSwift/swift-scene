@@ -88,6 +88,45 @@ It needs SDL3: `brew install sdl3` on macOS, `apt install libsdl3-dev` on Debian
 swift run scene-viewer
 ```
 
+## Writing 3DMF files
+
+`Metafile3D.encoded()` serializes a parsed or edited object tree in its original text or binary
+encoding (including little-endian binary files):
+
+```swift
+let metafile = try Metafile3D(inputBytes)
+let outputBytes = try metafile.encoded()
+```
+
+The writer preserves object payloads and hierarchy, including custom binary classes. Resolved references
+are expanded inline; output uses normal mode without a table of contents, original labels, or offsets.
+Binary payloads must retain their byte order. Text/binary payload conversion is not implemented;
+incompatible payloads throw `SceneFormatError.unsupported`.
+
+`ThreeDMFEncoder` exports a static `Scene` as text or binary 3DMF:
+
+```swift
+let outputBytes = try ThreeDMFEncoder().encodeScene(scene)
+let binaryBytes = try ThreeDMFEncoder(encoding: .binary(.bigEndian)).encodeScene(scene)
+// Use .binary(.littleEndian) for little-endian output.
+// Also conforms to SceneAssetEncoder:
+let asyncOutputBytes = try await ThreeDMFEncoder().encode(scene)
+```
+
+Scene export supports triangle lists and strips, indexed or non-indexed, normals, UV channel zero,
+node names, transforms, visibility, and color-based Phong/Blinn, Lambert and unlit materials.
+Blinn maps to Phong. Submeshes become separate TriMeshes inside display groups, so reloading preserves
+world placement and material assignment rather than the exact original node count. Material transparency,
+specular color, shininess, emission and face culling are exported. Textures, PBR, lights, cameras,
+node opacity and unsupported vertex streams throw an error. Animation and physics are not serialized;
+the current node transforms are exported as a static snapshot. Binary export supports the same scene subset
+as text, with byte-order-aware floats and integers, padded UTF-8 names, and 8-, 16- or 32-bit TriMesh indices
+selected from the vertex count. General conversion of arbitrary metafile payloads remains unsupported.
+
+Round-trip tests cover text and both binary byte orders, geometry, materials, textures, custom classes,
+and resolved references. With a Quesa checkout beside the package, tests also rewrite its sample models
+and decode the results.
+
 ## Acknowledgments
 
 The 3DMF reader is ported from [Quesa](https://github.com/jwwalker/quesa), © 1999–2021 Quesa Developers, under the
