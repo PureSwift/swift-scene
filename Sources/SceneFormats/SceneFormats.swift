@@ -29,3 +29,19 @@ public protocol SceneAssetEncoder {
 
     func encode(_ scene: Scene) async throws(SceneFormatError) -> [UInt8]
 }
+
+import BinaryParsing
+
+extension SceneFormatError {
+
+    /// A binary parser's error, as a format error: data ending early, or a value out of range.
+    init(_ error: ParsingError) {
+        if error.status == .insufficientData {
+            self = .unexpectedEndOfData(offset: error.location ?? 0)
+        } else if let format = error.userError as? SceneFormatError {
+            self = format
+        } else {
+            self = .malformed("Invalid value", offset: error.location)
+        }
+    }
+}
