@@ -2,6 +2,8 @@
 // Copyright (c) 1999-2021, Quesa Developers. All rights reserved.
 // Licensed under the BSD 3-Clause License; see LICENSE-Quesa.
 
+import BinaryParsing
+
 /// A 3D Metafile: QuickDraw 3D's scene file, binary or text, read into a tree of objects.
 public struct Metafile3D: Sendable {
 
@@ -257,8 +259,29 @@ public struct MetafileObject: Sendable {
 
 /// An object's data, as the file encodes it.
 public enum MetafileObjectData: Sendable {
-    case binary([UInt8], Metafile3D.ByteOrder)
+    case binary(BinaryMetafileData)
     case text([String])
 
     public static let empty = MetafileObjectData.text([])
+}
+
+/// A binary object's data: a range of the file's bytes, which every object of the file shares rather than copies.
+public struct BinaryMetafileData: Sendable {
+
+    /// The whole file.
+    let file: [UInt8]
+
+    /// Where in it the object's data is.
+    let range: ParserRange
+
+    public let byteOrder: Metafile3D.ByteOrder
+
+    init(file: [UInt8], range: ParserRange, byteOrder: Metafile3D.ByteOrder) {
+        self.file = file
+        self.range = range
+        self.byteOrder = byteOrder
+    }
+
+    /// The object's bytes.
+    public var bytes: ArraySlice<UInt8> { file[range.lowerBound ..< range.upperBound] }
 }
