@@ -28,6 +28,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Debian 13 packages SDL3; Ubuntu 24.04 doesn't.
     container: debian:trixie
+    defaults:
+      run:
+        # swiftly's environment script is bash.
+        shell: bash
     steps:
       - name: Install packages
         run: |
