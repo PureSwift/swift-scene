@@ -1,8 +1,30 @@
 # swift-scene
 Swift 3D Engine
 
-A pure-Swift 3D engine for Linux and Apple platforms: a SceneKit-style scene graph and a RealityKit-style ECS over
-one data-oriented core, with asset codecs (3DMF, OBJ, glTF, Collada, SCN, USD) and an SDL3 host.
+A Swift 3D engine for Linux first, and Apple platforms: a SceneKit-style scene graph and a RealityKit-style ECS over
+one data-oriented core, with asset codecs (3DMF, OBJ, glTF, Collada, SCN, USD), Box3D physics and an SDL3 host.
+
+## Architecture
+
+```
+                 scene-viewer     scene-convert
+                      |                 |
+        +-------------+--------+--------+---------+
+        |             |        |                  |
+    SceneSDL     SceneFormats  SceneUSD      ScenePhysics
+   (SDL3, GL)     (3DMF, …)   (SwiftUsd)       (Box3D)
+        |             |        |                  |
+        |         SceneGraph  SceneReality        |
+        |             |        |                  |
+        +-------------+--------+------------------+
+                           SceneCore
+```
+
+`SceneCore` is the shared foundation: math, the `EntityStore` both APIs keep their state in, mesh and material
+descriptors every renderer and codec reads, and the render backend protocols. `SceneGraph` (nodes, as SceneKit) and
+`SceneReality` (entities and systems, as RealityKit) are two surfaces over it, so they share assets and can render
+side by side. Codecs read files into scenes, physics moves `EntityStore` transforms, and backends draw
+`SceneCore` frames.
 
 | Module | Contents |
 | --- | --- |
@@ -10,9 +32,31 @@ one data-oriented core, with asset codecs (3DMF, OBJ, glTF, Collada, SCN, USD) a
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
 | `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order) and text, ported from Quesa; OBJ, glTF, Collada and SCN *(planned)* |
-| `SceneUSD` | `.usda`, `.usdc` and `.usdz` *(planned)* |
-| `ScenePhysics` | Rigid bodies and collision *(planned)* |
+| `SceneUSD` | USD stages, `.usda`, `.usdc` and `.usdz` through [apple/SwiftUsd](https://github.com/apple/SwiftUsd)'s OpenUSD, on Apple platforms *(planned)* |
+| `ScenePhysics` | `PhysicsWorld`, `PhysicsBody` and `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) over [Box3D](https://github.com/erincatto/box3d), with `PhysicsBodyComponent` keeping `EntityStore` transforms in step; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
+
+## Building
+
+Swift 6 on Linux (developed on Debian 13) or macOS. Two system libraries:
+
+- **SDL3** for `SceneSDL` and `scene-viewer`: `apt install libsdl3-dev`, or `brew install sdl3`.
+- **Box3D** for `ScenePhysics`, built with CMake and found by pkg-config. Without root, install it in your home:
+
+  ```sh
+  git clone https://github.com/erincatto/box3d.git
+  cmake -S box3d -B box3d/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/.local \
+    -DBOX3D_SAMPLES=OFF -DBOX3D_UNIT_TESTS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  cmake --build box3d/build -j && cmake --install box3d/build
+  export PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig
+  ```
+
+  On Apple platforms `ScenePhysics` doesn't link Box3D yet, and builds empty.
+
+```sh
+swift build
+swift test
+```
 
 Conventions: right-handed, y up, cameras and lights look down -z, angles in radians (camera field of view and spot
 angles in degrees, as SceneKit's). Matrices are column-major acting on column vectors; `Matrix4x4(quickDraw3D:)`
