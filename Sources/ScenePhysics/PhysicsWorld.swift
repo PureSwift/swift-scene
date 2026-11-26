@@ -18,6 +18,9 @@ public final class PhysicsWorld {
     /// The bodies in the world.
     public private(set) var bodies: [PhysicsBody] = []
 
+    /// The joints between its bodies.
+    public private(set) var joints: [PhysicsJoint] = []
+
     /// Bodies by their Box3D identifiers, to answer events and queries with.
     private var bodiesByKey: [BodyKey: PhysicsBody] = [:]
 
@@ -83,8 +86,21 @@ public final class PhysicsWorld {
     public func remove(_ body: PhysicsBody) {
         guard body.world === self, bodiesByKey.removeValue(forKey: BodyKey(body.id)) != nil else { return }
         bodies.removeAll { $0 === body }
+        // Box3D takes a body's joints with it.
+        for joint in joints where joint.bodyA === body || joint.bodyB === body {
+            joint.invalidate()
+        }
+        joints.removeAll { !$0.isValid }
         if b3Body_IsValid(body.id) { b3DestroyBody(body.id) }
         body.invalidate()
+    }
+
+    func appendJoint(_ joint: PhysicsJoint) {
+        joints.append(joint)
+    }
+
+    func unregister(_ joint: PhysicsJoint) {
+        joints.removeAll { $0 === joint }
     }
 
     func body(for id: b3BodyId) -> PhysicsBody? {

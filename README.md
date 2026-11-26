@@ -33,7 +33,7 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
 | `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order) and text, ported from Quesa; OBJ, glTF, Collada and SCN *(planned)* |
 | `SceneUSD` | USD stages, `.usda`, `.usdc` and `.usdz` through [apple/SwiftUsd](https://github.com/apple/SwiftUsd)'s OpenUSD, on Apple platforms *(planned)* |
-| `ScenePhysics` | `PhysicsWorld`, `PhysicsBody` and `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) over [Box3D](https://github.com/erincatto/box3d), with `PhysicsBodyComponent` keeping `EntityStore` transforms in step; on Linux for now |
+| `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
 ## Building

@@ -66,6 +66,7 @@ let package = Package(
             name: "ScenePhysics",
             dependencies: [
                 "SceneCore",
+                "SceneGraph",
                 .target(name: "CBox3D", condition: .when(platforms: [.linux])),
             ],
             swiftSettings: swiftSettings
@@ -114,7 +115,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ScenePhysicsTests",
-            dependencies: ["SceneCore", "ScenePhysics"],
+            dependencies: ["SceneCore", "SceneGraph", "ScenePhysics"],
             swiftSettings: swiftSettings
         ),
         .testTarget(
