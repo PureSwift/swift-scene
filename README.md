@@ -410,7 +410,13 @@ unoccluded to sampled occlusion. Packed ORM images are shared without changing t
 GLB conversion retains this value through `occlusionTexture.strength`. Unlit occlusion maps
 and nonstandard occlusion shader graphs remain unsupported.
 
-Transparency maps, property intensities other than normal/occlusion strength, custom culling/blending/depth
+Diffuse property intensity is baked into RGB constants or texture scale, leaving alpha unchanged.
+Constant emission intensity is likewise baked into emission RGB, including HDR values. Import
+normalizes these multipliers into colors/factors with unit property intensity. Intensities must
+be finite and nonnegative; the final diffuse RGB must remain in 0...1. Emissive textures continue
+to use `emissionFactor`; non-unit emissive texture intensity is rejected.
+
+Transparency maps, other unsupported property intensities, custom culling/blending/depth
 state and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
