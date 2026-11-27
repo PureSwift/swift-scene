@@ -3,7 +3,7 @@ import SceneFormats
 import SceneGraph
 
 /// Exports the current visible scene pose as standalone USDA or a USDZ containing scene.usda.
-/// Animation, physics and backgrounds are not serialized. Shading networks are not yet supported.
+/// Animation, physics and backgrounds are not serialized. Exports constant Preview Surface inputs; textures are not yet supported.
 public struct USDSceneEncoder: SceneAssetEncoder {
     public enum Encoding: Hashable, Sendable { case usda, usdz }
     public static let fileExtensions = ["usda", "usd", "usdz"]
@@ -26,7 +26,7 @@ public struct USDSceneEncoder: SceneAssetEncoder {
         // Always author a valid default prim, including for an empty or entirely hidden scene.
         writer.line("def Xform \"Scene\"", depth: 0)
         writer.line("{", depth: 0)
-        try writer.node(scene.rootNode, identifier: "Root", depth: 1)
+        try writer.node(scene.rootNode, identifier: "Root", parentPath: "/Scene", depth: 1)
         writer.line("}", depth: 0)
         let bytes = Array((writer.lines.joined(separator: "\n") + "\n").utf8)
         switch encoding {
@@ -49,7 +49,7 @@ private struct USDSceneWriter {
 
     mutating func line(_ text: String, depth: Int) { lines.append(String(repeating: "    ", count: depth) + text) }
 
-    mutating func node(_ node: Node, identifier: String, depth: Int) throws(SceneFormatError) {
+    mutating func node(_ node: Node, identifier: String, parentPath: String, depth: Int) throws(SceneFormatError) {
         guard !node.isHidden else { return }
         // Leaves room for mesh tuples within the reader's combined nesting limit.
         guard depth < 26 else { throw .unsupported("USD export hierarchy exceeds 25 node levels") }
@@ -57,6 +57,7 @@ private struct USDSceneWriter {
         if !geometryOnly, node.camera != nil || node.light != nil || node.opacity != 1 {
             throw .unsupported("USD export of cameras, lights or opacity; opt into geometryOnly")
         }
+        let path = parentPath + "/" + identifier
         let matrix = node.transform
         guard matrix.columnMajorElements.allSatisfy({ $0.isFinite }),
               matrix[3,0] == 0, matrix[3,1] == 0, matrix[3,2] == 0, matrix[3,3] == 1 else {
@@ -70,15 +71,15 @@ private struct USDSceneWriter {
         let rows = (0..<4).map { c in tuple((0..<4).map { matrix[$0,c] }) }
         line("matrix4d xformOp:transform = (\(rows.joined(separator: ", ")))", depth: depth + 1)
         line("uniform token[] xformOpOrder = [\"xformOp:transform\"]", depth: depth + 1)
-        if let geometry = node.geometry { try mesh(geometry, depth: depth + 1) }
+        if let geometry = node.geometry { try mesh(geometry, parentPath: path, depth: depth + 1) }
         for (index, child) in node.children.enumerated() {
             // Stable IDs avoid collisions with arbitrary Unicode/user-supplied names and generated meshes.
-            try self.node(child, identifier: "Node_\(index)", depth: depth + 1)
+            try self.node(child, identifier: "Node_\(index)", parentPath: path, depth: depth + 1)
         }
         line("}", depth: depth)
     }
 
-    mutating func mesh(_ geometry: Geometry, depth: Int) throws(SceneFormatError) {
+    mutating func mesh(_ geometry: Geometry, parentPath: String, depth: Int) throws(SceneFormatError) {
         let mesh = geometry.mesh
         guard mesh.vertexCount >= 0, mesh.vertexCount <= Int(Int32.max) else { throw USDRead.invalid("Invalid USD vertex count") }
         if mesh.vertexCount == 0 {
@@ -125,9 +126,8 @@ private struct USDSceneWriter {
             var comparable = material
             comparable.name = nil
             comparable.isDoubleSided = false
-            if !geometryOnly, comparable != .default {
-                throw .unsupported("USD material export is not implemented; opt into geometryOnly")
-            }
+            let preview = !geometryOnly && comparable != .default ? try USDPreviewMaterial(material) : nil
+            let materialPath = parentPath + "/Mesh_\(submeshIndex)/Material"
             var faces: [SIMD3<Int>] = []
             for triangle in mesh.triangles(in: submesh) {
                 if triangle.x == triangle.y || triangle.y == triangle.z || triangle.z == triangle.x { continue }
@@ -139,6 +139,7 @@ private struct USDSceneWriter {
             if faces.isEmpty { continue }
             line("def Mesh \"Mesh_\(submeshIndex)\" (", depth: depth)
             if let name = submesh.name ?? geometry.name { line("displayName = \(try quoted(name))", depth: depth + 1) }
+            if preview != nil { line("apiSchemas = [\"MaterialBindingAPI\"]", depth: depth + 1) }
             line(")", depth: depth)
             line("{", depth: depth)
             let indent = depth + 1
@@ -155,6 +156,28 @@ private struct USDSceneWriter {
             if let uv = mesh.stream(.textureCoordinate(0)) {
                 let values = stride(from: 0, to: uv.data.count, by: 2).map { tuple([uv.data[$0], 1 - uv.data[$0+1]]) }
                 line("texCoord2f[] primvars:st = [\(values.joined(separator: ", "))] (interpolation = \"vertex\")", depth: indent)
+            }
+            if let preview {
+                line("rel material:binding = <\(materialPath)>", depth: indent)
+                line("def Material \"Material\" (", depth: indent)
+                if let name = material.name { line("displayName = \(try quoted(name))", depth: indent + 1) }
+                line(")", depth: indent)
+                line("{", depth: indent)
+                line("token outputs:surface.connect = <\(materialPath)/Shader.outputs:surface>", depth: indent + 1)
+                line("def Shader \"Shader\"", depth: indent + 1)
+                line("{", depth: indent + 1)
+                let shaderDepth = indent + 2
+                line("uniform token info:id = \"UsdPreviewSurface\"", depth: shaderDepth)
+                line("color3f inputs:diffuseColor = \(tuple([preview.diffuse.x, preview.diffuse.y, preview.diffuse.z]))", depth: shaderDepth)
+                line("color3f inputs:emissiveColor = \(tuple([preview.emission.x, preview.emission.y, preview.emission.z]))", depth: shaderDepth)
+                line("float inputs:metallic = \(preview.metallic)", depth: shaderDepth)
+                line("float inputs:roughness = \(preview.roughness)", depth: shaderDepth)
+                line("float inputs:opacity = \(preview.opacity)", depth: shaderDepth)
+                line("float inputs:opacityThreshold = \(preview.opacityThreshold)", depth: shaderDepth)
+                if material.lightingModel == .unlit { line("float inputs:ior = 1", depth: shaderDepth) }
+                line("token outputs:surface", depth: shaderDepth)
+                line("}", depth: indent + 1)
+                line("}", depth: indent)
             }
             line("}", depth: depth)
         }
