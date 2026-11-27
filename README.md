@@ -80,7 +80,7 @@ try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
 
 `scene-viewer [file]` opens `.3dmf`, `.obj`, `.gltf`, `.glb`, `.dae`, `.scn`, or standalone static
 USDA (`.usda`/`.usd`, including inside `.usdz`), or a rotating textured demo without a file.
-USD supports directly bound Preview Surface constants and packaged diffuse textures;
+USD supports directly bound Preview Surface constants and packaged diffuse and emissive textures;
 `--geometry-only` discards unsupported shading.
 Source assets, external buffers, material libraries, and texture files are checked for changes every half second.
 A successful reload preserves the viewing camera and pause state. A failed reload retains the last valid scene and
@@ -206,7 +206,7 @@ described below.
 
 USD export writes `.usda`, text `.usd`, or `.usdz` containing `scene.usda`. It preserves static
 visible hierarchy, affine transforms (including pivots), triangle geometry, normals and UV0.
-Constant materials are exported as Preview Surface shaders; USDZ also embeds diffuse textures.
+Constant materials are exported as Preview Surface shaders; USDZ also embeds diffuse and emissive textures.
 Unsupported texture features, cameras,
 lights and node opacity require `--geometry-only` to explicitly discard them. Other unsupported
 vertex streams are also discarded with that option; double-sided surfaces are retained.
@@ -374,22 +374,23 @@ Legacy Phong/Blinn/Lambert surfaces become fully rough nonmetallic PBR; their am
 terms and shininess are not retained. Unlit surfaces are approximated using emission, zero diffuse
 and IOR 1. Material names use `displayName`. Default materials need no authored shader.
 
-USDZ diffuse textures accept in-memory images or local PNG/JPEG paths (JPEG uses PureSwift/swift-jpeg).
+USDZ diffuse and emissive textures accept in-memory images or local PNG/JPEG paths (JPEG uses PureSwift/swift-jpeg).
 Images are encoded as PNG and deduplicated within the package. A `UsdUVTexture` and
-`UsdPrimvarReader_float2` connect UV0 to diffuse RGB and, unless opaque, texture alpha.
-Linear color/alpha factors are applied through texture scale; source pixels are marked sRGB.
+`UsdPrimvarReader_float2` connect UV0 to diffuse/emissive RGB and, unless opaque, diffuse texture alpha.
+Independent linear color/alpha factors are applied through texture scale; emissive RGB factors may exceed 1 for HDR emission; source pixels are marked sRGB.
 PNG rows retain their original orientation while mesh UV V is flipped for USD. Clamp, repeat,
 mirror and transparent-black border wrapping are supported. Linear min/mag filters and unit
 anisotropy are required; mip filtering is left to the consuming renderer. Standalone USDA
 texture output, unlit textures, secondary UVs and texture transforms remain unsupported.
-USDZ import accepts this diffuse RGB/alpha graph, including PNG/JPEG package members, explicit
+USDZ import accepts these diffuse RGB/alpha and emissive RGB graphs, including PNG/JPEG package members, explicit
 sRGB color space, texture scale, zero bias, wrap modes and a direct `st` primvar reader. Image
 paths resolve relative to the default layer inside the package; no external files are opened.
-Shared diffuse/opacity sampling is supported. Constant opacity ignores image alpha, and missing
+Shared diffuse/opacity sampling is supported; emissive image alpha never controls surface opacity.
+Images shared between diffuse and emissive slots are deduplicated, while samplers and factors remain independent. Constant opacity ignores image alpha, and missing
 UVs, missing/corrupt images, unsupported color spaces or other graph structures produce errors.
 Standalone USDA texture loading and additional texture slots remain unsupported.
 
-Normal/occlusion/transparency/emission maps, property intensities, custom culling/blending/depth
+Normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
 state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
