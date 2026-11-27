@@ -123,19 +123,26 @@ struct USDAParser {
         let relationship = token.kind == .identifier("rel")
         let type: String?
         if relationship { try advance(); type = nil } else { type = try typeName() }
-        let name = try identifier(namespaced: true)
-        if token.kind == .punctuation(46) {
-            throw .unsupported("USDA property connections and time samples")
+        var name = try identifier(namespaced: true)
+        var connection = false
+        if try accept(46) {
+            let suffix = try identifier()
+            guard !relationship, suffix == "connect", name.hasPrefix("inputs:") || name.hasPrefix("outputs:") else {
+                throw .unsupported("USDA non-shading connections and time samples")
+            }
+            name += ".connect"
+            connection = true
         }
         let value: USDValue?
         if try accept(61) { value = try self.value(depth: depth) } else { value = nil }
-        if relationship, let value {
+        if connection, value == nil { throw malformed("Missing connection targets") }
+        if relationship || connection, let value {
             let targets: [USDValue]
             if case .array(let array) = value { targets = array }
             else if value == .blocked { targets = [] }
             else { targets = [value] }
             guard targets.allSatisfy({ if case .path = $0 { return true }; return false }) else {
-                throw malformed("Relationship targets must be paths")
+                throw malformed("Relationship and connection targets must be paths")
             }
         }
         let metadata = try metadata(depth: depth)
