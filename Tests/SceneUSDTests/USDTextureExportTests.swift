@@ -57,7 +57,15 @@ import SceneUSD
         #expect(mesh[property: "primvars:st"]?.value == .array([
             .tuple([.number("0.0"), .number("1.0")]), .tuple([.number("1.0"), .number("1.0")]),
             .tuple([.number("0.0"), .number("0.0")])]))
-        #expect(throws: SceneFormatError.self) { try USDSceneDecoder().decodeScene(bytes) }
+        let restored = try USDSceneDecoder().decodeScene(bytes)
+        var restoredMaterials: [MaterialDescriptor] = []
+        restored.rootNode.enumerateHierarchy { node, _ in
+            if let material = node.geometry?.materials.first { restoredMaterials.append(material.descriptor) }
+        }
+        #expect(restoredMaterials.count == 2)
+        #expect(restoredMaterials.allSatisfy { $0.diffuse.contents == .texture(.image(image)) })
+        #expect(restoredMaterials.allSatisfy { $0.diffuseFactor == SIMD4(0.25,0.5,0.75,0.25) })
+        #expect(restoredMaterials.allSatisfy { $0.alphaMode == .blend && $0.diffuse.sampler.wrapS == .repeat && $0.diffuse.sampler.wrapT == .mirror })
         _ = try USDSceneDecoder(geometryOnly: true).decodeScene(bytes)
     }
 
