@@ -3,7 +3,7 @@ import SceneFormats
 import SceneGraph
 
 /// Exports the current visible scene pose as standalone USDA or a USDZ containing scene.usda.
-/// Animation, physics and backgrounds are not serialized. Exports Preview Surface constants and packaged diffuse textures.
+/// Animation, physics and backgrounds are not serialized. Exports Preview Surface constants and packaged diffuse and emissive textures.
 public struct USDSceneEncoder: SceneAssetEncoder {
     public enum Encoding: Hashable, Sendable { case usda, usdz }
     public static let fileExtensions = ["usda", "usd", "usdz"]
@@ -138,6 +138,14 @@ private struct USDSceneWriter {
                 texture = try USDTextureExport(material.diffuse)
                 constants.diffuse = .color(SIMD4(repeating: 1))
             }
+            var emissionTexture: USDTextureExport?
+            if !geometryOnly, case .texture = material.emission.contents {
+                guard packagesTextures else { throw .unsupported("Textured USD export requires .usdz output") }
+                guard material.lightingModel != .unlit else { throw .unsupported("USDZ unlit texture export") }
+                guard mesh.stream(.textureCoordinate(0)) != nil else { throw USDRead.invalid("USDZ textured mesh requires UV0") }
+                emissionTexture = try USDTextureExport(material.emission)
+                constants.emission = .color(SIMD4(repeating: 1))
+            }
             let preview = !geometryOnly && comparable != .default ? try USDPreviewMaterial(constants) : nil
             let materialPath = parentPath + "/Mesh_\(submeshIndex)/Material"
             var faces: [SIMD3<Int>] = []
@@ -185,7 +193,11 @@ private struct USDSceneWriter {
                 } else {
                     line("color3f inputs:diffuseColor = \(tuple([preview.diffuse.x, preview.diffuse.y, preview.diffuse.z]))", depth: shaderDepth)
                 }
-                line("color3f inputs:emissiveColor = \(tuple([preview.emission.x, preview.emission.y, preview.emission.z]))", depth: shaderDepth)
+                if emissionTexture != nil {
+                    line("color3f inputs:emissiveColor.connect = <\(materialPath)/EmissionTexture.outputs:rgb>", depth: shaderDepth)
+                } else {
+                    line("color3f inputs:emissiveColor = \(tuple([preview.emission.x, preview.emission.y, preview.emission.z]))", depth: shaderDepth)
+                }
                 line("float inputs:metallic = \(preview.metallic)", depth: shaderDepth)
                 line("float inputs:roughness = \(preview.roughness)", depth: shaderDepth)
                 if texture != nil, material.alphaMode != .opaque {
@@ -198,7 +210,12 @@ private struct USDSceneWriter {
                 line("token outputs:surface", depth: shaderDepth)
                 line("}", depth: indent + 1)
                 if let texture {
-                    try textureShaders(texture, preview: preview, materialPath: materialPath, depth: indent + 1)
+                    try textureShaders(texture, name: "DiffuseTexture", scale: [preview.diffuse.x, preview.diffuse.y, preview.diffuse.z, preview.opacity],
+                                       writeUVReader: true, materialPath: materialPath, depth: indent + 1)
+                }
+                if let emissionTexture {
+                    try textureShaders(emissionTexture, name: "EmissionTexture", scale: [preview.emission.x, preview.emission.y, preview.emission.z, 1],
+                                       writeUVReader: texture == nil, materialPath: materialPath, depth: indent + 1)
                 }
                 line("}", depth: indent)
             }
@@ -206,8 +223,8 @@ private struct USDSceneWriter {
         }
     }
 
-    private mutating func textureShaders(_ texture: USDTextureExport, preview: USDPreviewMaterial,
-                                         materialPath: String, depth: Int) throws(SceneFormatError) {
+    private mutating func textureShaders(_ texture: USDTextureExport, name: String, scale: [Float],
+                                         writeUVReader: Bool, materialPath: String, depth: Int) throws(SceneFormatError) {
         let path: String
         if let existing = imagePaths[texture.image] { path = existing }
         else {
@@ -216,13 +233,15 @@ private struct USDSceneWriter {
             textures.append(.init(path: path, data: bytes))
             imagePaths[texture.image] = path
         }
-        line("def Shader \"UVReader\"", depth: depth)
-        line("{", depth: depth)
-        line("uniform token info:id = \"UsdPrimvarReader_float2\"", depth: depth + 1)
-        line("string inputs:varname = \"st\"", depth: depth + 1)
-        line("float2 outputs:result", depth: depth + 1)
-        line("}", depth: depth)
-        line("def Shader \"DiffuseTexture\"", depth: depth)
+        if writeUVReader {
+            line("def Shader \"UVReader\"", depth: depth)
+            line("{", depth: depth)
+            line("uniform token info:id = \"UsdPrimvarReader_float2\"", depth: depth + 1)
+            line("string inputs:varname = \"st\"", depth: depth + 1)
+            line("float2 outputs:result", depth: depth + 1)
+            line("}", depth: depth)
+        }
+        line("def Shader \"\(name)\"", depth: depth)
         line("{", depth: depth)
         line("uniform token info:id = \"UsdUVTexture\"", depth: depth + 1)
         line("asset inputs:file = @\(path)@", depth: depth + 1)
@@ -230,7 +249,7 @@ private struct USDSceneWriter {
         line("float2 inputs:st.connect = <\(materialPath)/UVReader.outputs:result>", depth: depth + 1)
         line("token inputs:wrapS = \"\(texture.wrapS)\"", depth: depth + 1)
         line("token inputs:wrapT = \"\(texture.wrapT)\"", depth: depth + 1)
-        line("float4 inputs:scale = \(tuple([preview.diffuse.x, preview.diffuse.y, preview.diffuse.z, preview.opacity]))", depth: depth + 1)
+        line("float4 inputs:scale = \(tuple(scale))", depth: depth + 1)
         line("float3 outputs:rgb", depth: depth + 1)
         line("float outputs:a", depth: depth + 1)
         line("}", depth: depth)
