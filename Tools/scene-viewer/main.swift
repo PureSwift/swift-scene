@@ -16,9 +16,10 @@ import SDL3Swift
 //
 // Usage: scene-viewer [options] [file]
 //
-// Supports .3dmf, .obj, .gltf, .glb, .dae and .scn, with dependency hot reload.
+// Supports .3dmf, .obj, .gltf, .glb, .dae, .scn and static USDA/USDZ, with dependency hot reload.
 //
 // Options:
+//   --geometry-only    discard USD material bindings and shading prims
 //   --inspector / --normals / --wireframe  enable diagnostic overlays
 //   --es               OpenGL ES 3.0 instead of OpenGL 3.3 Core
 //   --frames <n>       quit after n frames
@@ -34,11 +35,13 @@ struct Options {
     var inspector = false
     var normals = false
     var wireframe = false
+    var geometryOnly = false
 
     init(_ arguments: [String]) {
         var arguments = arguments.makeIterator()
         while let argument = arguments.next() {
             switch argument {
+            case "--geometry-only": geometryOnly = true
             case "--inspector": inspector = true
             case "--normals": normals = true
             case "--wireframe": wireframe = true
@@ -142,7 +145,7 @@ func run() throws {
     }
     print("OpenGL: \(backend.renderer.version) — \(backend.renderer.renderer)")
     // Textures named by path, as OBJ materials name them.
-    let asset = options.file.map { SceneAssetFile(url: URL(fileURLWithPath: $0)) }
+    let asset = options.file.map { makeViewerAsset(url: URL(fileURLWithPath: $0), geometryOnly: options.geometryOnly) }
     backend.renderer.textureLoader = { source in
         if case .path(let path) = source, let asset, let bytes = asset.readTexture(path) {
             return TextureImageLoader.decode(bytes)
