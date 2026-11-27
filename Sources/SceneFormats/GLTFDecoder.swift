@@ -238,6 +238,7 @@ private struct GLTFSceneBuilder {
         guard base.count == 4, emission.count == 3 else { throw .malformed("Invalid material color", offset: nil) }
         var material = MaterialDescriptor.physicallyBased(baseColor: SIMD4(base[0], base[1], base[2], base[3]),
                                                          metalness: pbr?.metallicFactor ?? 1, roughness: pbr?.roughnessFactor ?? 1)
+        if source.extensions?.KHR_materials_unlit != nil { material.lightingModel = .unlit }
         material.name = source.name
         material.isDoubleSided = source.doubleSided ?? false
         material.emission = .color(SIMD4(emission[0], emission[1], emission[2], 1))
