@@ -1,7 +1,7 @@
 import SceneCore
 import SceneFormats
 
-/// Validated color texture inputs. PNG bytes keep their original top-to-bottom row order;
+/// Validated texture inputs. PNG bytes keep their original top-to-bottom row order;
 /// the mesh exporter changes UV V to USD's bottom-origin convention.
 struct USDTextureExport {
     let image: ImageBuffer
@@ -25,7 +25,7 @@ struct USDTextureExport {
             throw .unsupported("USDZ nearest-mip texture filtering")
         }
         guard let image = TextureImageLoader.load(source) else {
-            throw .unsupported("Cannot resolve USDZ color texture")
+            throw .unsupported("Cannot resolve USDZ texture")
         }
         self.image = image
         wrapS = Self.wrap(sampler.wrapS)
