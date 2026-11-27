@@ -89,13 +89,17 @@ public struct CameraDescriptor: Hashable, Sendable {
 
     public var zFar: Float
 
+    /// A fixed asset camera aspect ratio; nil follows the render target.
+    public var aspectRatio: Float?
+
     public init(
         fieldOfView: Float = 60,
         projectionDirection: ProjectionDirection = .vertical,
         usesOrthographicProjection: Bool = false,
         orthographicScale: Float = 1,
         zNear: Float = 1,
-        zFar: Float = 100
+        zFar: Float = 100,
+        aspectRatio: Float? = nil
     ) {
         self.fieldOfView = fieldOfView
         self.projectionDirection = projectionDirection
@@ -103,11 +107,13 @@ public struct CameraDescriptor: Hashable, Sendable {
         self.orthographicScale = orthographicScale
         self.zNear = zNear
         self.zFar = zFar
+        self.aspectRatio = aspectRatio
     }
 
     /// The projection for a viewport of the aspect ratio, width over height.
     public func projectionMatrix(aspectRatio aspect: Float) -> Matrix4x4 {
-        let aspect = aspect > 0 ? aspect : 1
+        let requested = aspectRatio ?? aspect
+        let aspect = requested > 0 ? requested : 1
         if usesOrthographicProjection {
             let top = orthographicScale, right = orthographicScale * aspect
             return .orthographic(left: -right, right: right, bottom: -top, top: top, near: zNear, far: zFar)

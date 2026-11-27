@@ -7,7 +7,7 @@ import SceneCore
 /// of windows: any host that makes a context current and can look up its functions can use it.
 public final class OpenGLRenderer {
 
-    /// Draws polygons as their outlines. Desktop OpenGL only.
+    /// Draws polygons as outlines, with an indexed-line fallback on OpenGL ES.
     public var isWireframe = false
 
     /// Resolves a texture that isn't already an image in memory, such as a path; nil draws it untextured.
@@ -26,7 +26,11 @@ public final class OpenGLRenderer {
     private var uniformLocations: [String: GLint] = [:]
     private var meshes: [UInt64: MeshResource] = [:]
     private var scratch: MeshResource?
-    private var textures: [TextureSource: TextureResource] = [:]
+    private struct TextureKey: Hashable {
+        var source: TextureSource
+        var sampler: TextureSampler
+    }
+    private var textures: [TextureKey: TextureResource] = [:]
     /// Bound when a draw has no texture, so the sampler always reads a complete one.
     private var whiteTexture: GLuint = 0
     private var frameNumber = 0
@@ -50,6 +54,14 @@ public final class OpenGLRenderer {
         }
         gl.texParameteri(GLConstant.texture2D, GLConstant.textureMinFilter, GLint(bitPattern: GLConstant.nearest))
         gl.texParameteri(GLConstant.texture2D, GLConstant.textureMagFilter, GLint(bitPattern: GLConstant.nearest))
+    }
+
+    /// Drops cached images after an asset or one of its texture files changes.
+    public func invalidateTextures() {
+        for texture in textures.values {
+            withUnsafePointer(to: texture.name) { gl.deleteTextures(1, $0) }
+        }
+        textures.removeAll()
     }
 
     /// Frees the GL objects; call while the context is current, before it is destroyed.
@@ -108,11 +120,25 @@ public final class OpenGLRenderer {
     }
 
     private func draw(_ call: DrawCall, camera: CameraUniforms) {
+        var call = call
+        let wire = isWireframe && call.material.readsFromDepthBuffer
+        if let polygonMode = gl.polygonMode {
+            polygonMode(GLConstant.frontAndBack, wire ? GLConstant.line : GLConstant.fill)
+        } else if wire, call.submesh.primitive == .triangles || call.submesh.primitive == .triangleStrip {
+            let triangles = call.mesh.triangles(in: call.submesh)
+            let edges = triangles.flatMap { [$0.x, $0.y, $0.y, $0.z, $0.z, $0.x] }
+            call.mesh.indices = IndexBuffer(edges)
+            call.mesh.submeshes = [Submesh(primitive: .lines, range: 0..<edges.count, materialIndex: 0)]
+            call.submeshIndex = 0
+            call.meshKey = nil
+        }
         let resource = meshResource(for: call)
         gl.bindVertexArray(resource.vertexArray)
         // Streams the mesh lacks read as constants, which aren't part of a vertex array's state.
         if !resource.hasNormals { gl.vertexAttrib4f(GLShaders.normalLocation, 0, 0, 1, 0) }
         if !resource.hasTextureCoordinates { gl.vertexAttrib4f(GLShaders.textureCoordinateLocation, 0, 0, 0, 0) }
+        if !resource.hasTextureCoordinates1 { gl.vertexAttrib4f(GLShaders.textureCoordinate1Location, 0, 0, 0, 0) }
+        if !resource.hasTangents { gl.vertexAttrib4f(GLShaders.tangentLocation, 0, 0, 0, 1) }
         if !resource.hasColors { gl.vertexAttrib4f(GLShaders.colorLocation, 1, 1, 1, 1) }
 
         setMatrix("u_model", call.worldTransform)
@@ -163,22 +189,54 @@ public final class OpenGLRenderer {
         case .none:
             break
         }
-        diffuse = SIMD4(diffuse.xyz * material.diffuse.intensity, diffuse.w)
+        diffuse = SIMD4(diffuse.xyz * material.diffuse.intensity, diffuse.w) * material.diffuseFactor
         setVector4("u_diffuse", diffuse)
         uniform("u_hasDiffuseTexture") { gl.uniform1i($0, texture == nil ? 0 : 1) }
         gl.activeTexture(GLConstant.texture0)
         gl.bindTexture(GLConstant.texture2D, texture?.name ?? whiteTexture)
         setMatrix("u_textureTransform", material.diffuse.contentsTransform)
+        uniform("u_diffuseChannel") { gl.uniform1i($0, GLint(material.diffuse.mappingChannel)) }
+        func bind(_ property: MaterialProperty, unit: GLint, name: String) {
+            gl.activeTexture(GLConstant.texture0 + GLenum(unit))
+            var texture: TextureResource?
+            if case .texture(let source) = property.contents {
+                texture = textureResource(for: source, sampler: property.sampler)
+            }
+            gl.bindTexture(GLConstant.texture2D, texture?.name ?? whiteTexture)
+            uniform("u_has" + name + "Texture") { gl.uniform1i($0, texture == nil ? 0 : 1) }
+            let lower = name.prefix(1).lowercased() + name.dropFirst()
+            uniform("u_" + lower + "Texture") { gl.uniform1i($0, unit) }
+            uniform("u_" + lower + "Channel") { gl.uniform1i($0, GLint(property.mappingChannel)) }
+        }
+        bind(material.metalness, unit: 1, name: "MetallicRoughness")
+        bind(material.normal, unit: 2, name: "Normal")
+        bind(material.ambientOcclusion, unit: 3, name: "Occlusion")
+        bind(material.emission, unit: 4, name: "Emission")
+        gl.activeTexture(GLConstant.texture0)
+        uniform("u_normalScale") { gl.uniform1f($0, material.normal.intensity) }
+        uniform("u_occlusionStrength") { gl.uniform1f($0, material.ambientOcclusion.intensity) }
+        let alphaMode: GLint
+        let cutoff: Float
+        switch material.alphaMode {
+        case .legacy, .blend: alphaMode = 0; cutoff = 0
+        case .opaque: alphaMode = 1; cutoff = 0
+        case .mask(let value): alphaMode = 2; cutoff = value
+        }
+        uniform("u_alphaMode") { gl.uniform1i($0, alphaMode) }
+        uniform("u_alphaCutoff") { gl.uniform1f($0, cutoff) }
 
         func rgb(_ property: MaterialProperty) -> SIMD3<Float> {
             (property.color?.xyz ?? .zero) * property.intensity
         }
         setVector3("u_ambient", [rgb(material.ambient)])
         setVector3("u_specular", [rgb(material.specular)])
-        setVector3("u_emission", [rgb(material.emission)])
+        let emission: SIMD3<Float>
+        if case .texture = material.emission.contents { emission = material.emissionFactor }
+        else { emission = rgb(material.emission) * material.emissionFactor }
+        setVector3("u_emission", [emission])
         uniform("u_shininess") { gl.uniform1f($0, material.shininess) }
-        uniform("u_metalness") { gl.uniform1f($0, material.metalness.color?.x ?? 0) }
-        uniform("u_roughness") { gl.uniform1f($0, material.roughness.color?.x ?? 0.5) }
+        uniform("u_metalness") { gl.uniform1f($0, (material.metalness.color?.x ?? 1) * material.metalnessFactor) }
+        uniform("u_roughness") { gl.uniform1f($0, (material.roughness.color?.x ?? 1) * material.roughnessFactor) }
         uniform("u_opacity") { gl.uniform1f($0, material.transparency * opacity) }
         uniform("u_isDoubleSided") { gl.uniform1i($0, material.isDoubleSided ? 1 : 0) }
 
@@ -272,6 +330,8 @@ public final class OpenGLRenderer {
         var hasNormals = false
         var hasTextureCoordinates = false
         var hasColors = false
+        var hasTextureCoordinates1 = false
+        var hasTangents = false
         var lastUsed = 0
     }
 
@@ -317,7 +377,9 @@ public final class OpenGLRenderer {
             case .position: location = GLShaders.positionLocation
             case .normal: location = GLShaders.normalLocation
             case .textureCoordinate(0): location = GLShaders.textureCoordinateLocation
+            case .tangent: location = GLShaders.tangentLocation
             case .color: location = GLShaders.colorLocation
+            case .textureCoordinate(1): location = GLShaders.textureCoordinate1Location
             default: continue
             }
             gl.enableVertexAttribArray(location)
@@ -325,13 +387,15 @@ public final class OpenGLRenderer {
             gl.vertexAttribPointer(location, GLint(attribute.componentCount), GLConstant.float, GLConstant.false_, stride, offset)
             enabled.insert(location)
         }
-        for location in [GLShaders.positionLocation, GLShaders.normalLocation, GLShaders.textureCoordinateLocation, GLShaders.colorLocation]
+        for location in [GLShaders.positionLocation, GLShaders.normalLocation, GLShaders.textureCoordinateLocation, GLShaders.colorLocation, GLShaders.textureCoordinate1Location, GLShaders.tangentLocation]
         where !enabled.contains(location) {
             gl.disableVertexAttribArray(location)
         }
         resource.hasNormals = enabled.contains(GLShaders.normalLocation)
         resource.hasTextureCoordinates = enabled.contains(GLShaders.textureCoordinateLocation)
+        resource.hasTangents = enabled.contains(GLShaders.tangentLocation)
         resource.hasColors = enabled.contains(GLShaders.colorLocation)
+        resource.hasTextureCoordinates1 = enabled.contains(GLShaders.textureCoordinate1Location)
 
         gl.bindBuffer(GLConstant.elementArrayBuffer, resource.indexBuffer)
         switch mesh.indices {
@@ -362,14 +426,15 @@ public final class OpenGLRenderer {
     }
 
     private func textureResource(for source: TextureSource, sampler: TextureSampler) -> TextureResource? {
-        if var known = textures[source] {
+        let key = TextureKey(source: source, sampler: sampler)
+        if var known = textures[key] {
             if known.sampler != sampler {
                 gl.bindTexture(GLConstant.texture2D, known.name)
                 applySampler(sampler, hasMipmaps: true)
                 known.sampler = sampler
             }
             known.lastUsed = frameNumber
-            textures[source] = known
+            textures[key] = known
             return known
         }
         let image: ImageBuffer
@@ -391,7 +456,7 @@ public final class OpenGLRenderer {
         gl.generateMipmap(GLConstant.texture2D)
         applySampler(sampler, hasMipmaps: true)
         let resource = TextureResource(name: name, sampler: sampler, lastUsed: frameNumber)
-        textures[source] = resource
+        textures[key] = resource
         return resource
     }
 
@@ -520,7 +585,9 @@ public final class OpenGLRenderer {
         gl.bindAttribLocation(program, GLShaders.positionLocation, "a_position")
         gl.bindAttribLocation(program, GLShaders.normalLocation, "a_normal")
         gl.bindAttribLocation(program, GLShaders.textureCoordinateLocation, "a_textureCoordinate")
+        gl.bindAttribLocation(program, GLShaders.tangentLocation, "a_tangent")
         gl.bindAttribLocation(program, GLShaders.colorLocation, "a_color")
+        gl.bindAttribLocation(program, GLShaders.textureCoordinate1Location, "a_textureCoordinate1")
         gl.linkProgram(program)
         gl.deleteShader(vertex)
         gl.deleteShader(fragment)
