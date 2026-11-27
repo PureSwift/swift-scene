@@ -103,7 +103,7 @@ import SceneUSD
         invalid = original; invalid.diffuse.sampler.mipFilter = .nearest; variants.append(invalid)
         invalid = original; invalid.diffuse = .texture(.path("missing.png")); variants.append(invalid)
         invalid = original; invalid.lightingModel = .unlit; variants.append(invalid)
-        invalid = original; invalid.ambientOcclusion = .texture(.image(image)); variants.append(invalid)
+        invalid = original; invalid.transparent = .texture(.image(image)); variants.append(invalid)
         var malformed = image
         malformed.bytesPerRow = 1
         invalid = original; invalid.diffuse = .texture(.image(malformed)); variants.append(invalid)
