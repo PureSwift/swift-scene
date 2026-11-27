@@ -52,7 +52,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
         if ["Material", "Shader", "NodeGraph"].contains(prim.typeName ?? "") {
             return nil
         }
-        guard prim.typeName == nil || ["Xform", "Scope", "Mesh", "Camera", "DistantLight"].contains(prim.typeName ?? "") else {
+        guard prim.typeName == nil || ["Xform", "Scope", "Mesh", "Camera", "DistantLight", "SphereLight"].contains(prim.typeName ?? "") else {
             throw .unsupported("USD prim type \(prim.typeName ?? "") at \(prim.path)")
         }
         for property in prim.properties {
@@ -66,7 +66,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             if property.name.hasPrefix("primvars:"), prim.typeName != "Mesh" {
                 throw .unsupported("Inherited USD primvars")
             }
-            if property.name.hasPrefix("xformOp"), !["Xform", "Mesh", "Camera", "DistantLight"].contains(prim.typeName ?? "") {
+            if property.name.hasPrefix("xformOp"), !["Xform", "Mesh", "Camera", "DistantLight", "SphereLight"].contains(prim.typeName ?? "") {
                 throw .unsupported("USD transform on a non-Xformable prim")
             }
         }
@@ -87,6 +87,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
         if let purpose = try USDRead.attribute(prim, "purpose", types: ["token"]), try USDRead.string(purpose) != "default" {
             throw .unsupported("USD non-default purpose")
         }
+        if prim.typeName == "SphereLight", !geometryOnly { result.light = try USDDistantLight.decode(prim, point: true) }
         if prim.typeName == "DistantLight", !geometryOnly { result.light = try USDDistantLight.decode(prim) }
         if prim.typeName == "Camera", !geometryOnly { result.camera = try USDCamera.decode(prim) }
         if prim.typeName == "Mesh" {
