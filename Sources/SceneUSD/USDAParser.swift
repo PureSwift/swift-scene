@@ -156,12 +156,23 @@ struct USDAParser {
         try checkDepth(depth)
         var result: [String: USDValue] = [:]
         while token.kind != .punctuation(41) {
-            let name = try identifier()
+            var name = try identifier()
+            // A standalone layer has no weaker API schema list to compose with.
+            if name == "prepend" || name == "append" {
+                name = try identifier()
+                guard name == "apiSchemas" else { throw .unsupported("USDA metadata list operations") }
+            }
             if Self.compositionKeys.contains(name) || Self.listOperations.contains(name) {
                 throw .unsupported("USDA composition metadata: \(name)")
             }
             try require(61)
             let value = try value(depth: depth + 1)
+            if name == "apiSchemas" {
+                guard case .array(let values) = value,
+                      values.allSatisfy({ if case .string = $0 { return true }; return false }) else {
+                    throw malformed("USD API schemas must be a token list")
+                }
+            }
             guard result.updateValue(value, forKey: name) == nil else { throw malformed("Duplicate metadata key") }
             _ = try accept(59)
         }
