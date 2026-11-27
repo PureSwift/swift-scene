@@ -110,6 +110,7 @@ let package = Package(
                 "SceneCore",
                 "SceneGraph",
                 "SceneFormats",
+                "SceneUSD",
                 "SceneSDL",
                 .product(name: "SDL3Swift", package: "SDL"),
             ],
