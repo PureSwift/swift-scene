@@ -91,7 +91,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             let material = Material(boundMaterial ?? .default)
             if let value = try USDRead.attribute(prim, "doubleSided", types: ["bool"]) { material.isDoubleSided = try USDRead.boolean(value) }
             result.geometry = Geometry(mesh: try USDMesh.make(prim), materials: [material])
-            for property in [material.diffuse, material.emission, material.metalness, material.roughness] {
+            for property in [material.diffuse, material.emission, material.metalness, material.roughness, material.normal] {
                 if case .texture = property.contents, result.geometry?.mesh.stream(.textureCoordinate(0)) == nil {
                     throw USDRead.invalid("USD textured mesh requires primvars:st")
                 }
