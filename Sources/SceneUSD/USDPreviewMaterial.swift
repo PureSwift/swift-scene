@@ -10,7 +10,7 @@ struct USDPreviewMaterial {
     let opacity: Float
     let opacityThreshold: Float
 
-    init(_ material: MaterialDescriptor) throws(SceneFormatError) {
+    init(_ material: MaterialDescriptor, nodeOpacity: Float = 1) throws(SceneFormatError) {
         guard material.cullMode == .back, material.blendMode == .alpha,
               material.writesToDepthBuffer, material.readsFromDepthBuffer else {
             throw .unsupported("USD custom culling, blending or depth state; opt into geometryOnly")
@@ -49,12 +49,12 @@ struct USDPreviewMaterial {
         roughness = material.lightingModel == .physicallyBased ? rough : 1
         switch material.alphaMode {
         case .opaque: opacity = 1; opacityThreshold = 0
-        case .legacy, .blend: opacity = base.w * material.transparency; opacityThreshold = 0
+        case .legacy, .blend: opacity = base.w * material.transparency * nodeOpacity; opacityThreshold = 0
         case .mask(let cutoff):
             guard cutoff.isFinite, cutoff > 0, cutoff <= 1 else {
                 throw .unsupported("USD opacity mask cutoff must be in (0, 1]")
             }
-            opacity = base.w * material.transparency
+            opacity = base.w * material.transparency * nodeOpacity
             opacityThreshold = cutoff
         }
         guard [self.emission.x, self.emission.y, self.emission.z].allSatisfy({ $0.isFinite }) else {

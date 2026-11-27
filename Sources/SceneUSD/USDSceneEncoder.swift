@@ -3,7 +3,8 @@ import SceneFormats
 import SceneGraph
 
 /// Exports the current visible scene pose as standalone USDA or a USDZ containing scene.usda.
-/// Animation, physics and backgrounds are not serialized. Exports Preview Surface constants and packaged diffuse and emissive textures.
+/// Animation, physics and backgrounds are not serialized. Exports Preview Surface materials and packaged textures.
+/// Inherited node opacity is baked into material alpha; fully transparent subtrees are omitted.
 public struct USDSceneEncoder: SceneAssetEncoder {
     public enum Encoding: Hashable, Sendable { case usda, usdz }
     public static let fileExtensions = ["usda", "usd", "usdz"]
@@ -26,7 +27,7 @@ public struct USDSceneEncoder: SceneAssetEncoder {
         // Always author a valid default prim, including for an empty or entirely hidden scene.
         writer.line("def Xform \"Scene\"", depth: 0)
         writer.line("{", depth: 0)
-        try writer.node(scene.rootNode, identifier: "Root", parentPath: "/Scene", depth: 1)
+        try writer.node(scene.rootNode, identifier: "Root", parentPath: "/Scene", depth: 1, opacity: 1)
         writer.line("}", depth: 0)
         let bytes = Array((writer.lines.joined(separator: "\n") + "\n").utf8)
         switch encoding {
@@ -52,13 +53,15 @@ private struct USDSceneWriter {
 
     mutating func line(_ text: String, depth: Int) { lines.append(String(repeating: "    ", count: depth) + text) }
 
-    mutating func node(_ node: Node, identifier: String, parentPath: String, depth: Int) throws(SceneFormatError) {
+    mutating func node(_ node: Node, identifier: String, parentPath: String, depth: Int, opacity parentOpacity: Float) throws(SceneFormatError) {
         guard !node.isHidden else { return }
         // Leaves room for mesh tuples within the reader's combined nesting limit.
         guard depth < 26 else { throw .unsupported("USD export hierarchy exceeds 25 node levels") }
         guard node.opacity.isFinite, (0...1).contains(node.opacity) else { throw USDRead.invalid("Invalid node opacity") }
-        if !geometryOnly, node.camera != nil || node.light != nil || node.opacity != 1 {
-            throw .unsupported("USD export of cameras, lights or opacity; opt into geometryOnly")
+        let opacity = geometryOnly ? 1 : parentOpacity * node.opacity
+        guard opacity > 0 else { return }
+        if !geometryOnly, node.camera != nil || node.light != nil {
+            throw .unsupported("USD export of cameras or lights; opt into geometryOnly")
         }
         let path = parentPath + "/" + identifier
         let matrix = node.transform
@@ -74,15 +77,15 @@ private struct USDSceneWriter {
         let rows = (0..<4).map { c in tuple((0..<4).map { matrix[$0,c] }) }
         line("matrix4d xformOp:transform = (\(rows.joined(separator: ", ")))", depth: depth + 1)
         line("uniform token[] xformOpOrder = [\"xformOp:transform\"]", depth: depth + 1)
-        if let geometry = node.geometry { try mesh(geometry, parentPath: path, depth: depth + 1) }
+        if let geometry = node.geometry { try mesh(geometry, parentPath: path, depth: depth + 1, opacity: opacity) }
         for (index, child) in node.children.enumerated() {
             // Stable IDs avoid collisions with arbitrary Unicode/user-supplied names and generated meshes.
-            try self.node(child, identifier: "Node_\(index)", parentPath: path, depth: depth + 1)
+            try self.node(child, identifier: "Node_\(index)", parentPath: path, depth: depth + 1, opacity: opacity)
         }
         line("}", depth: depth)
     }
 
-    mutating func mesh(_ geometry: Geometry, parentPath: String, depth: Int) throws(SceneFormatError) {
+    mutating func mesh(_ geometry: Geometry, parentPath: String, depth: Int, opacity: Float) throws(SceneFormatError) {
         let mesh = geometry.mesh
         guard mesh.vertexCount >= 0, mesh.vertexCount <= Int(Int32.max) else { throw USDRead.invalid("Invalid USD vertex count") }
         if mesh.vertexCount == 0 {
@@ -181,7 +184,7 @@ private struct USDSceneWriter {
                 occlusionTexture = try USDTextureExport(property)
                 constants.ambientOcclusion = MaterialProperty()
             }
-            let preview = !geometryOnly && comparable != .default ? try USDPreviewMaterial(constants) : nil
+            let preview = !geometryOnly && (comparable != .default || opacity < 1) ? try USDPreviewMaterial(constants, nodeOpacity: opacity) : nil
             let materialPath = parentPath + "/Mesh_\(submeshIndex)/Material"
             var faces: [SIMD3<Int>] = []
             for triangle in mesh.triangles(in: submesh) {

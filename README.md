@@ -411,10 +411,17 @@ GLB conversion retains this value through `occlusionTexture.strength`. Unlit occ
 and nonstandard occlusion shader graphs remain unsupported.
 
 Transparency maps, property intensities other than normal/occlusion strength, custom culling/blending/depth
-state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
+state, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
 use the renderer's alpha blending approximation rather than full optical transmission.
+Inherited node opacity is baked into each exported material's constant opacity or diffuse texture
+alpha scale. Shared source materials remain unchanged. Legacy/blended surfaces multiply node
+opacity by material alpha and transparency; masked surfaces apply their cutoff after that
+multiplication, while explicit opaque surfaces ignore alpha, matching the renderer. Fully
+transparent node subtrees are omitted. Reimport preserves the visible opacity through materials,
+rather than reconstructing the original node opacity values. Geometry-only export ignores opacity.
+
 Animation tracks, skin bindings, physics and backgrounds are not serialized; deformed mesh data
 and transforms capture the current pose. Round-trip tests cover transforms, escaped names,
 submeshes, malformed geometry, deterministic bytes and safe file replacement.
