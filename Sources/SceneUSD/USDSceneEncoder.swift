@@ -8,11 +8,14 @@ import SceneGraph
 public struct USDSceneEncoder: SceneAssetEncoder {
     public enum Encoding: Hashable, Sendable { case usda, usdz }
     public static let fileExtensions = ["usda", "usd", "usdz"]
+    /// Fixed viewport width/height for cameras without an authored aspect ratio.
+    public var cameraAspectRatio: Float?
     public var encoding: Encoding
     /// Explicitly discard materials, cameras, lights and opacity. Geometry keeps normals and UV0.
     public var geometryOnly: Bool
 
-    public init(encoding: Encoding = .usda, geometryOnly: Bool = false) {
+    public init(encoding: Encoding = .usda, geometryOnly: Bool = false, cameraAspectRatio: Float? = nil) {
+        self.cameraAspectRatio = cameraAspectRatio
         self.encoding = encoding
         self.geometryOnly = geometryOnly
     }
@@ -22,7 +25,7 @@ public struct USDSceneEncoder: SceneAssetEncoder {
     }
 
     public func encodeScene(_ scene: Scene) throws(SceneFormatError) -> [UInt8] {
-        var writer = USDSceneWriter(geometryOnly: geometryOnly, packagesTextures: encoding == .usdz)
+        var writer = USDSceneWriter(geometryOnly: geometryOnly, packagesTextures: encoding == .usdz, cameraAspectRatio: cameraAspectRatio)
         writer.lines = ["#usda 1.0", "(", "    defaultPrim = \"Scene\"", "    metersPerUnit = 1", "    upAxis = \"Y\"", ")", ""]
         // Always author a valid default prim, including for an empty or entirely hidden scene.
         writer.line("def Xform \"Scene\"", depth: 0)
@@ -38,8 +41,8 @@ public struct USDSceneEncoder: SceneAssetEncoder {
 
     /// Per-conversion registrations; .usd deliberately contains USDA text, never Crate bytes.
     public var fileEncoders: [String: SceneAssetConverter.Encoder] {
-        let text = USDSceneEncoder(encoding: .usda, geometryOnly: geometryOnly)
-        let package = USDSceneEncoder(encoding: .usdz, geometryOnly: geometryOnly)
+        let text = USDSceneEncoder(encoding: .usda, geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio)
+        let package = USDSceneEncoder(encoding: .usdz, geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio)
         return ["usda": text.encodeScene, "usd": text.encodeScene, "usdz": package.encodeScene]
     }
 }
@@ -47,6 +50,7 @@ public struct USDSceneEncoder: SceneAssetEncoder {
 private struct USDSceneWriter {
     let geometryOnly: Bool
     let packagesTextures: Bool
+    let cameraAspectRatio: Float?
     var lines: [String] = []
     var textures: [USDZArchive.Entry] = []
     var imagePaths: [ImageBuffer: String] = [:]
@@ -60,8 +64,8 @@ private struct USDSceneWriter {
         guard node.opacity.isFinite, (0...1).contains(node.opacity) else { throw USDRead.invalid("Invalid node opacity") }
         let opacity = geometryOnly ? 1 : parentOpacity * node.opacity
         guard opacity > 0 else { return }
-        if !geometryOnly, node.camera != nil || node.light != nil {
-            throw .unsupported("USD export of cameras or lights; opt into geometryOnly")
+        if !geometryOnly, node.light != nil {
+            throw .unsupported("USD export of lights; opt into geometryOnly")
         }
         let path = parentPath + "/" + identifier
         let matrix = node.transform
@@ -77,6 +81,16 @@ private struct USDSceneWriter {
         let rows = (0..<4).map { c in tuple((0..<4).map { matrix[$0,c] }) }
         line("matrix4d xformOp:transform = (\(rows.joined(separator: ", ")))", depth: depth + 1)
         line("uniform token[] xformOpOrder = [\"xformOp:transform\"]", depth: depth + 1)
+        if !geometryOnly, let camera = node.camera {
+            line("def Camera \"Camera\" (", depth: depth + 1)
+            if let name = camera.name { line("displayName = \(try quoted(name))", depth: depth + 2) }
+            line(")", depth: depth + 1)
+            line("{", depth: depth + 1)
+            for attribute in try USDCamera.attributes(camera, aspect: cameraAspectRatio) {
+                line(attribute, depth: depth + 2)
+            }
+            line("}", depth: depth + 1)
+        }
         if let geometry = node.geometry { try mesh(geometry, parentPath: path, depth: depth + 1, opacity: opacity) }
         for (index, child) in node.children.enumerated() {
             // Stable IDs avoid collisions with arbitrary Unicode/user-supplied names and generated meshes.
