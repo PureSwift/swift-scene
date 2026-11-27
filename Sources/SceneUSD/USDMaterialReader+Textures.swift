@@ -1,15 +1,13 @@
+import Foundation
 import SceneCore
 import SceneFormats
 
 extension USDMaterialReader {
     enum TextureSlot { case diffuse, unlit, emission, metallicRoughness, normal, occlusion }
 
-    /// Reads supported UV0 texture graphs. Assets stay inside the archive.
+    /// Reads supported UV0 graphs from package members or an explicit standalone resolver.
     func texture(_ surface: USDPrim, slot: TextureSlot, opacity: Float = 1) throws(SceneFormatError)
         -> (property: MaterialProperty, factor: SIMD4<Float>, usesAlpha: Bool) {
-        guard let archive, let layer = archive.defaultLayer else {
-            throw .unsupported("USD textures require a USDZ package")
-        }
         let input: String
         switch slot {
         case .diffuse: input = "inputs:diffuseColor.connect"
@@ -88,9 +86,27 @@ extension USDMaterialReader {
         guard let file = try USDRead.attribute(texture, "inputs:file", types: ["asset"]), case .asset(let assetPath) = file else {
             throw USDRead.invalid("USD texture requires an asset file")
         }
-        let entryPath = try packagePath(assetPath, relativeTo: layer.path)
-        guard let entry = archive[entryPath] else { throw USDRead.invalid("Missing USDZ texture \(entryPath)") }
-        var image = try TextureImageLoader.decodeImage(Array(entry.data))
+        let bytes: [UInt8]
+        if let archive, let layer = archive.defaultLayer {
+            let entryPath = try packagePath(assetPath, relativeTo: layer.path)
+            guard let entry = archive[entryPath] else { throw USDRead.invalid("Missing USDZ texture \(entryPath)") }
+            bytes = Array(entry.data)
+        } else {
+            guard let resourceLoader else { throw .unsupported("Standalone USD textures require a resource loader") }
+            guard !assetPath.isEmpty, !assetPath.hasPrefix("/"), !assetPath.contains(":"),
+                  !assetPath.contains("\\"), !assetPath.contains("["), !assetPath.contains("]") else {
+                throw .unsupported("USD external texture requires a relative file path")
+            }
+            // USD asset paths are literal paths, whereas SceneResourceLoader consumes URI references.
+            let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/-._~"))
+            guard let uri = assetPath.addingPercentEncoding(withAllowedCharacters: allowed) else {
+                throw USDRead.invalid("Invalid USD texture path")
+            }
+            do { bytes = try resourceLoader(uri) }
+            catch let error as SceneFormatError { throw error }
+            catch { throw USDRead.invalid("Cannot load USD texture \(assetPath): \(error)") }
+        }
+        var image = try TextureImageLoader.decodeImage(bytes)
         // Constant opacity is independent of image alpha. Clear it before ordinary material blending.
         if slot == .diffuse || slot == .unlit, alphaConnection == nil {
             for y in 0..<image.height {
