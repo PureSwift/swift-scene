@@ -153,7 +153,14 @@ import SceneUSD
             #expect(shader[property: "inputs:emissiveColor"]?.value == .tuple([.number("1.0"), .number("0.5"), .number("0.0")]))
             let second = try #require(stage.prim(at: "/Scene/Root/Node_0/Mesh_1/Material/Shader"))
             #expect(second[property: "inputs:roughness"]?.value == .number("1.0"))
-            #expect(throws: SceneFormatError.self) { try USDSceneDecoder().decodeScene(data) }
+            let restored = try USDSceneDecoder().decodeScene(data)
+            let restoredMaterial = try #require(meshes(restored).first?.geometry?.materials.first?.descriptor)
+            #expect(restoredMaterial.name == material.name)
+            #expect(restoredMaterial.diffuse.color == SIMD4(0.4,0.4,0.2,0.25))
+            #expect(restoredMaterial.metalness.contents == .scalar(0.4))
+            #expect(restoredMaterial.roughness.contents == .scalar(0.3))
+            #expect(restoredMaterial.alphaMode == .mask(cutoff: 0.25))
+            #expect(restoredMaterial.emission.color == SIMD4(1,0.5,0,1))
             #expect(try meshes(USDSceneDecoder(geometryOnly: true).decodeScene(data)).count == 2)
         }
         let stripped = try USDStage(usda: USDSceneEncoder(geometryOnly: true).encodeScene(scene))

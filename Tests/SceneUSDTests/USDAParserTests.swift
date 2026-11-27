@@ -103,6 +103,20 @@ import SceneFormats
         #expect(throws: SceneFormatError.self) { try USDSceneDecoder(geometryOnly: true).decodeScene(nonShader) }
     }
 
+    @Test func standaloneAppliedSchemaLists() throws {
+        for prefix in ["", "prepend ", "append "] {
+            let stage = try parse("def Mesh \"M\" (\(prefix)apiSchemas = [\"MaterialBindingAPI\"]) {}")
+            #expect(stage.prim(at: "/M")?.metadata["apiSchemas"] == .array([.string("MaterialBindingAPI")]))
+        }
+        for metadata in [
+            "prepend apiSchemas = [1]", "apiSchemas = \"MaterialBindingAPI\"",
+            "prepend apiSchemas = [] append apiSchemas = []",
+            "delete apiSchemas = [\"MaterialBindingAPI\"]"
+        ] {
+            #expect(throws: SceneFormatError.self) { try parse("def Mesh \"M\" (\(metadata)) {}") }
+        }
+    }
+
     @Test func rejectsCompositionAndAnimationInsteadOfDroppingThem() throws {
         for text in [
             "(subLayers = [@other.usda@])", "over \"World\" {}", "class \"Base\" {}",

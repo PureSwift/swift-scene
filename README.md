@@ -80,7 +80,8 @@ try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
 
 `scene-viewer [file]` opens `.3dmf`, `.obj`, `.gltf`, `.glb`, `.dae`, `.scn`, or standalone static
 USDA (`.usda`/`.usd`, including inside `.usdz`), or a rotating textured demo without a file.
-For USD assets with materials, `--geometry-only` explicitly discards bindings and shading prims.
+USD supports directly bound Preview Surface constants and packaged diffuse and emissive textures;
+`--geometry-only` discards unsupported shading.
 Source assets, external buffers, material libraries, and texture files are checked for changes every half second.
 A successful reload preserves the viewing camera and pause state. A failed reload retains the last valid scene and
 reports the error in the console (and inspector status); saving a corrected file retries it.
@@ -205,7 +206,8 @@ described below.
 
 USD export writes `.usda`, text `.usd`, or `.usdz` containing `scene.usda`. It preserves static
 visible hierarchy, affine transforms (including pivots), triangle geometry, normals and UV0.
-Constant materials are exported as Preview Surface shaders. Textures, cameras,
+Constant materials are exported as Preview Surface shaders; USDZ also embeds diffuse and emissive textures.
+Unsupported texture features, cameras,
 lights and node opacity require `--geometry-only` to explicitly discard them. Other unsupported
 vertex streams are also discarded with that option; double-sided surfaces are retained.
 
@@ -307,12 +309,14 @@ let points = world?[property: "points"]?.value
 The stage retains prim and property order, declared type names, custom/variability qualifiers,
 metadata, typed dictionaries, arrays, tuples, relationship targets, asset paths and value blocks.
 `USDValue.number` preserves numeric spelling rather than converting integers through floating point.
+One explicit, prepend or append `apiSchemas` list per prim is accepted and normalized to its
+authored token order for the standalone layer; this does not implement composition across layers.
 This is a syntax model: it does not validate schema-specific attribute types, apply schema defaults,
 resolve assets or evaluate transforms. Traversal includes inactive authored definitions.
 
 The current subset requires ASCII prim/property identifiers, supports UTF-8 strings and asset paths,
 and limits combined hierarchy/value nesting to 32 levels. Composition arcs, overrides/classes,
-variants, list operations, non-shading connections, time samples, triple-delimited asset paths and uncommon
+variants, general list operations, non-shading connections, time samples, triple-delimited asset paths and uncommon
 string escapes throw errors. A mesh fixture serialized by OpenUSD 26.11, malformed input tests,
 truncation tests and byte-mutation tests exercise the parser without a native USD dependency.
 
@@ -336,16 +340,23 @@ when TRS decomposition would lose them; unrepresentable singular matrices throw.
 to centimetres and convert to metres; Y-up and Z-up convert to the engine's Y-up convention.
 Inactive subtrees are omitted and visibility is inherited through nodes.
 
-Material bindings and shading prims require explicit `geometryOnly: true`, which discards them in
-favor of default materials. Subdivision, other primvars, inherited primvars, skeletal deformation,
+Material import resolves direct all-purpose bindings, including inheritance and descendant overrides,
+to a single `UsdPreviewSurface` shader. Diffuse/emissive colors, metallic/roughness, alpha
+and positive opacity masks map to material descriptors. The exporter's emission-only unlit approximation
+is recognized. Binding and connection targets currently require absolute paths. Unbound shading
+definitions are ignored. Collection/purpose bindings, stronger-than-descendants bindings, arbitrary
+shader input connections, specular workflow and nondefault clearcoat/IOR/normal/displacement/occlusion
+inputs throw; `geometryOnly: true` discards shading in favor of default materials.
+Subdivision, other primvars, inherited primvars, skeletal deformation,
 non-default purposes and unsupported prim types throw. Both tools register the USD decoder and retain
 their import options across reloads. Viewer cameras and lights remain outside the USD unit/axis transform.
-Only the source file/package is watched; external USD references and texture loading are unsupported.
-USDC, composition and shading network evaluation remain unimplemented.
+Only the source file/package is watched; external USD references and external texture loading are unsupported.
+USDC, composition and general shading network evaluation remain unimplemented.
 Apple SwiftUsd is not a dependency.
 
-`USDSceneEncoder` exports the current visible pose to deterministic USDA or a USDZ with a single
-`scene.usda` member. It authors a `Scene` default prim, Y-up coordinates and metre units. Stable
+`USDSceneEncoder` exports the current visible pose to deterministic USDA or a USDZ with a
+`scene.usda` default layer and optional PNG textures. It authors a `Scene` default prim,
+Y-up coordinates and metre units. Stable
 prim identifiers avoid name collisions; original names are stored in `displayName` and restored
 by the decoder. Each submesh becomes a separate Mesh child, so reimport preserves the visual
 hierarchy rather than exact node topology. Indexed and nonindexed triangle lists/strips are
@@ -363,10 +374,34 @@ Legacy Phong/Blinn/Lambert surfaces become fully rough nonmetallic PBR; their am
 terms and shininess are not retained. Unlit surfaces are approximated using emission, zero diffuse
 and IOR 1. Material names use `displayName`. Default materials need no authored shader.
 
-Textures, normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
+USDZ diffuse and emissive textures accept in-memory images or local PNG/JPEG paths (JPEG uses PureSwift/swift-jpeg).
+Images are encoded as PNG and deduplicated within the package. A `UsdUVTexture` and
+`UsdPrimvarReader_float2` connect UV0 to diffuse/emissive RGB and, unless opaque, diffuse texture alpha.
+Independent linear color/alpha factors are applied through texture scale; emissive RGB factors may exceed 1 for HDR emission; source pixels are marked sRGB.
+PNG rows retain their original orientation while mesh UV V is flipped for USD. Clamp, repeat,
+mirror and transparent-black border wrapping are supported. Linear min/mag filters and unit
+anisotropy are required; mip filtering is left to the consuming renderer. Standalone USDA
+texture output, unlit textures, secondary UVs and texture transforms remain unsupported.
+USDZ import accepts these diffuse RGB/alpha and emissive RGB graphs, including PNG/JPEG package members, explicit
+sRGB color space, texture scale, zero bias, wrap modes and a direct `st` primvar reader. Image
+paths resolve relative to the default layer inside the package; no external files are opened.
+Shared diffuse/opacity sampling is supported; emissive image alpha never controls surface opacity.
+Images shared between diffuse and emissive slots are deduplicated, while samplers and factors remain independent. Constant opacity ignores image alpha, and missing
+UVs, missing/corrupt images, unsupported color spaces or other graph structures produce errors.
+Standalone USDA texture loading and additional texture slots remain unsupported.
+
+Packed metallic/roughness maps also round-trip through USDZ: roughness uses green, metallic
+uses blue, and both connections share one `UsdUVTexture` in raw color space. Their independent
+factors are stored in the corresponding scale channels. Export requires a physically based
+material with identical metalness/roughness texture properties, including sampler and UV settings.
+Separate maps, single connected channels, different channel packing and sRGB data maps are rejected.
+The packed image may share storage with color textures while each shader retains its own color space.
+
+Normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
 state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
-material shading and those node properties. Shading input/output connection paths are parsed
-without evaluation: importing the resulting materials still requires `geometryOnly: true`.
+material shading and those node properties. Exported constant materials can be imported without
+`geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
+use the renderer's alpha blending approximation rather than full optical transmission.
 Animation tracks, skin bindings, physics and backgrounds are not serialized; deformed mesh data
 and transforms capture the current pose. Round-trip tests cover transforms, escaped names,
 submeshes, malformed geometry, deterministic bytes and safe file replacement.

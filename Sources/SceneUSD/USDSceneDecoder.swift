@@ -3,7 +3,7 @@ import SceneFormats
 import SceneGraph
 
 /// Imports standalone static USDA (including USDA inside USDZ) into a Y-up, metre-based scene.
-/// Only polygon meshes, Xforms and Scopes are supported. Shading networks are not evaluated.
+/// Supports static geometry and Preview Surface materials, including packaged diffuse and emissive textures.
 public struct USDSceneDecoder: SceneAssetDecoder {
     public static let fileExtensions = ["usda", "usd", "usdz"]
 
@@ -18,13 +18,18 @@ public struct USDSceneDecoder: SceneAssetDecoder {
 
     public func decodeScene(_ data: [UInt8]) throws(SceneFormatError) -> Scene {
         if data.prefix(4).elementsEqual([0x50, 0x4b, 3, 4]) {
-            return try decodeScene(USDStage(archive: USDZArchive(data)))
+            let archive = try USDZArchive(data)
+            return try decodeScene(USDStage(archive: archive), archive: archive)
         }
         if data.prefix(8).elementsEqual(Array("PXR-USDC".utf8)) { throw .unsupported("USDC Crate layers") }
         return try decodeScene(USDStage(usda: data))
     }
 
     public func decodeScene(_ stage: USDStage) throws(SceneFormatError) -> Scene {
+        try decodeScene(stage, archive: nil)
+    }
+
+    private func decodeScene(_ stage: USDStage, archive: USDZArchive?) throws(SceneFormatError) -> Scene {
         let scene = Scene()
         let units = try USDRead.scalar(stage.metadata["metersPerUnit"] ?? .number("0.01"))
         guard units > 0 else { throw USDRead.invalid("metersPerUnit must be positive") }
@@ -34,18 +39,17 @@ public struct USDSceneDecoder: SceneAssetDecoder {
         scene.rootNode.orientation = rotation
         scene.rootNode.scale = SIMD3(repeating: units)
         for prim in stage.rootPrims {
-            if let node = try node(prim, parentWorld: .identity) { scene.rootNode.addChild(node) }
+            if let node = try node(prim, parentWorld: .identity, materials: USDMaterialReader(stage: stage, archive: archive), inheritedMaterial: nil) { scene.rootNode.addChild(node) }
         }
         return scene
     }
 
-    private func node(_ prim: USDPrim, parentWorld: Matrix4x4) throws(SceneFormatError) -> Node? {
+    private func node(_ prim: USDPrim, parentWorld: Matrix4x4, materials: USDMaterialReader, inheritedMaterial: MaterialDescriptor?) throws(SceneFormatError) -> Node? {
         if let active = prim.metadata["active"], try !USDRead.boolean(active) { return nil }
         if let instanceable = prim.metadata["instanceable"], try USDRead.boolean(instanceable) {
             throw .unsupported("USD instances at \(prim.path)")
         }
         if ["Material", "Shader", "NodeGraph"].contains(prim.typeName ?? "") {
-            guard geometryOnly else { throw .unsupported("USD shading networks; opt into geometryOnly") }
             return nil
         }
         guard prim.typeName == nil || ["Xform", "Scope", "Mesh"].contains(prim.typeName ?? "") else {
@@ -53,9 +57,6 @@ public struct USDSceneDecoder: SceneAssetDecoder {
         }
         for property in prim.properties {
             if property.name.hasSuffix(".connect") { throw .unsupported("USD connections outside shading prims") }
-            if property.name.hasPrefix("material:binding"), !geometryOnly {
-                throw .unsupported("USD material bindings; opt into geometryOnly")
-            }
             if property.name.hasPrefix("skel:") || property.name.hasPrefix("primvars:skel:") {
                 throw .unsupported("USD skeletal deformation")
             }
@@ -69,6 +70,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
                 throw .unsupported("USD transform on a non-Xformable prim")
             }
         }
+        let boundMaterial = geometryOnly ? nil : try materials.binding(on: prim, inherited: inheritedMaterial)
         let result = Node(name: try USDRead.string(prim.metadata["displayName"] ?? .string(prim.name)))
         let transform = try USDTransform.matrix(prim)
         let local: Matrix4x4
@@ -86,15 +88,20 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             throw .unsupported("USD non-default purpose")
         }
         if prim.typeName == "Mesh" {
-            let material = Material()
+            let material = Material(boundMaterial ?? .default)
             if let value = try USDRead.attribute(prim, "doubleSided", types: ["bool"]) { material.isDoubleSided = try USDRead.boolean(value) }
             result.geometry = Geometry(mesh: try USDMesh.make(prim), materials: [material])
+            for property in [material.diffuse, material.emission, material.metalness, material.roughness] {
+                if case .texture = property.contents, result.geometry?.mesh.stream(.textureCoordinate(0)) == nil {
+                    throw USDRead.invalid("USD textured mesh requires primvars:st")
+                }
+            }
             result.geometry?.name = result.name
         }
         let world = parentWorld * local
         guard world.columnMajorElements.allSatisfy({ $0.isFinite }) else { throw USDRead.invalid("USD transform overflow") }
         for child in prim.children {
-            if let node = try node(child, parentWorld: world) { result.addChild(node) }
+            if let node = try node(child, parentWorld: world, materials: materials, inheritedMaterial: boundMaterial) { result.addChild(node) }
         }
         return result
     }
