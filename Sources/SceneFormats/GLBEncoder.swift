@@ -4,13 +4,16 @@ import SceneGraph
 
 /// Exports the current visible mesh pose as a self-contained glTF 2.0 binary file.
 /// Animation, physics and scene backgrounds are not serialized. Legacy lighting models are
-/// approximated as nonmetallic PBR surfaces. Cameras and lights require explicit omission.
+/// approximated as nonmetallic PBR surfaces. Supports cameras and punctual lights.
 public struct GLBEncoder: SceneAssetEncoder {
     public static let fileExtensions = ["glb"]
     public var omitCamerasAndLights: Bool
+    /// Viewport width/height for horizontal-FOV or orthographic cameras without a fixed aspect.
+    public var cameraAspectRatio: Float?
 
-    public init(omitCamerasAndLights: Bool = false) {
+    public init(omitCamerasAndLights: Bool = false, cameraAspectRatio: Float? = nil) {
         self.omitCamerasAndLights = omitCamerasAndLights
+        self.cameraAspectRatio = cameraAspectRatio
     }
 
     public func encode(_ scene: Scene) async throws(SceneFormatError) -> [UInt8] {
@@ -18,13 +21,16 @@ public struct GLBEncoder: SceneAssetEncoder {
     }
 
     public func encodeScene(_ scene: Scene) throws(SceneFormatError) -> [UInt8] {
-        var writer = GLBWriter(omitCamerasAndLights: omitCamerasAndLights)
+        var writer = GLBWriter(omitCamerasAndLights: omitCamerasAndLights, cameraAspectRatio: cameraAspectRatio)
         return try writer.encode(scene)
     }
 }
 
 private struct GLBWriter {
     let omitCamerasAndLights: Bool
+    let cameraAspectRatio: Float?
+    var cameras: [[String: Any]] = []
+    var lights: [[String: Any]] = []
     var binary: [UInt8] = []
     var views: [[String: Any]] = []
     var accessors: [[String: Any]] = []
@@ -43,10 +49,16 @@ private struct GLBWriter {
             "scene": 0, "scenes": [sceneDefinition]]
         for (key, values) in [("nodes", nodes), ("meshes", meshes), ("materials", materials),
                               ("bufferViews", views), ("accessors", accessors), ("images", images),
-                              ("textures", textures), ("samplers", samplers)] where !values.isEmpty {
+                              ("textures", textures), ("samplers", samplers), ("cameras", cameras)] where !values.isEmpty {
             document[key] = values
         }
-        if usesUnlit { document["extensionsUsed"] = ["KHR_materials_unlit"] }
+        var extensionsUsed: [String] = []
+        if usesUnlit { extensionsUsed.append("KHR_materials_unlit") }
+        if !lights.isEmpty {
+            extensionsUsed.append("KHR_lights_punctual")
+            document["extensions"] = ["KHR_lights_punctual": ["lights": lights]]
+        }
+        if !extensionsUsed.isEmpty { document["extensionsUsed"] = extensionsUsed }
         if !binary.isEmpty { document["buffers"] = [["byteLength": binary.count]] }
         var json: [UInt8]
         do { json = Array(try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys])) }
@@ -63,9 +75,6 @@ private struct GLBWriter {
     mutating func node(_ node: Node, opacity: Float, depth: Int) throws(SceneFormatError) -> Int? {
         guard depth < 250 else { throw .unsupported("GLB hierarchy exceeds 250 levels") }
         if node.isHidden { return nil }
-        guard omitCamerasAndLights || (node.camera == nil && node.light == nil) else {
-            throw .unsupported("GLB camera/light export; use omitCamerasAndLights to export geometry only")
-        }
         let opacity = opacity * node.opacity
         guard opacity.isFinite, (0...1).contains(opacity), node.transform.columnMajorElements.allSatisfy(\.isFinite) else {
             throw .malformed("Invalid node transform or opacity", offset: nil)
@@ -76,6 +85,16 @@ private struct GLBWriter {
         if node.transform != .identity { result["matrix"] = node.transform.columnMajorElements }
         if let name = node.name { result["name"] = name }
         if let geometry = node.geometry { result["mesh"] = try mesh(geometry, opacity: opacity) }
+        if !omitCamerasAndLights {
+            if let camera = node.camera {
+                result["camera"] = cameras.count
+                cameras.append(try GLTFCameraLightCodec.encodeCamera(camera, fallbackAspect: cameraAspectRatio))
+            }
+            if let light = node.light {
+                result["extensions"] = ["KHR_lights_punctual": ["light": lights.count]]
+                lights.append(try GLTFCameraLightCodec.encodeLight(light))
+            }
+        }
         var children: [Int] = []
         for child in node.children {
             if let childIndex = try self.node(child, opacity: opacity, depth: depth + 1) { children.append(childIndex) }

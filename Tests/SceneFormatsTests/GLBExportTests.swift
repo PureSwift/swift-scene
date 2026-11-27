@@ -103,7 +103,7 @@ import SceneGraph
     @Test func rejectsInvalidMeshesAndUnsupportedFeatures() throws {
         let original = scene()
         let box = try #require(original.rootNode.childNode(named: "box"))
-        box.camera = Camera()
+        box.camera = Camera(CameraDescriptor(fieldOfView: -1))
         #expect(throws: SceneFormatError.self) { try GLBEncoder().encodeScene(original) }
         #expect(throws: Never.self) { try GLBEncoder(omitCamerasAndLights: true).encodeScene(original) }
         box.camera = nil
@@ -170,7 +170,7 @@ import SceneGraph
     @Test func scnFixtureConvertsWithExplicitGeometryOnly() throws {
         let fixture = try #require(Bundle.module.url(forResource: "reference", withExtension: "scn", subdirectory: "Fixtures"))
         let scene = try SceneAssetFile(url: fixture).load()
-        #expect(throws: SceneFormatError.self) { try GLBEncoder().encodeScene(scene) }
+        #expect(throws: Never.self) { try GLBEncoder().encodeScene(scene) }
         let result = try GLTFDecoder().decodeScene(GLBEncoder(omitCamerasAndLights: true).encodeScene(scene))
         let primitiveCount = scene.rootNode.childNodes { $0.geometry != nil }.reduce(0) { $0 + ($1.geometry?.mesh.submeshes.count ?? 0) }
         #expect(result.rootNode.childNodes { $0.geometry != nil }.count == primitiveCount)

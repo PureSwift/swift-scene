@@ -54,6 +54,10 @@ private struct GLTFSceneBuilder {
         }
         var materials: [Material] = []
         for source in document.materials ?? [] { materials.append(try material(source)) }
+        var lights: [Light] = []
+        for source in document.extensions?.KHR_lights_punctual?.lights ?? [] {
+            lights.append(try GLTFCameraLightCodec.decodeLight(source))
+        }
         var primitiveNodes = [[Node]](repeating: [], count: nodes.count)
         for (index, definition) in definitions.enumerated() {
             nodes[index].transform = try transform(definition)
@@ -71,10 +75,14 @@ private struct GLTFSceneBuilder {
             if let cameraIndex = definition.camera {
                 let cameras = document.cameras ?? []
                 guard cameras.indices.contains(cameraIndex) else { throw .malformed("Invalid camera index", offset: nil) }
-                nodes[index].camera = try camera(cameras[cameraIndex])
+                nodes[index].camera = try GLTFCameraLightCodec.decodeCamera(cameras[cameraIndex])
             }
         }
         for (index, definition) in definitions.enumerated() {
+            if let lightIndex = definition.extensions?.KHR_lights_punctual?.light {
+                guard lights.indices.contains(lightIndex) else { throw .malformed("Invalid punctual light index", offset: nil) }
+                nodes[index].light = lights[lightIndex]
+            }
             for child in definition.children ?? [] { nodes[index].addChild(nodes[child]) }
         }
         let scene = Scene()
@@ -205,30 +213,6 @@ private struct GLTFSceneBuilder {
             material = materials[index]
         } else { material = Material(.physicallyBased(baseColor: [1, 1, 1, 1], metalness: 1, roughness: 1)) }
         return Geometry(mesh: mesh, materials: [material])
-    }
-
-    func camera(_ source: GLTFDocument.Camera) throws(SceneFormatError) -> Camera {
-        var descriptor = CameraDescriptor()
-        if source.type == "perspective", let perspective = source.perspective {
-            guard perspective.yfov > 0, perspective.yfov < .pi, perspective.znear > 0,
-                  perspective.zfar.map({ $0 > perspective.znear }) ?? true else {
-                throw .malformed("Invalid perspective camera", offset: nil)
-            }
-            descriptor.fieldOfView = perspective.yfov * 180 / .pi
-            descriptor.aspectRatio = perspective.aspectRatio
-            descriptor.zNear = perspective.znear
-            descriptor.zFar = perspective.zfar ?? 100_000
-        } else if source.type == "orthographic", let orthographic = source.orthographic {
-            guard orthographic.xmag > 0, orthographic.ymag > 0, orthographic.zfar > orthographic.znear else {
-                throw .malformed("Invalid orthographic camera", offset: nil)
-            }
-            descriptor.usesOrthographicProjection = true
-            descriptor.orthographicScale = orthographic.ymag
-            descriptor.aspectRatio = orthographic.xmag / orthographic.ymag
-            descriptor.zNear = orthographic.znear
-            descriptor.zFar = orthographic.zfar
-        } else { throw .malformed("Invalid glTF camera", offset: nil) }
-        return Camera(descriptor)
     }
 
     func material(_ source: GLTFDocument.Material) throws(SceneFormatError) -> Material {

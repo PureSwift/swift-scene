@@ -176,4 +176,32 @@ struct OpenGLRendererTests {
         #expect(pixel(try backend.snapshot(commands), x: 32, y: 32) == SIMD4(255, 0, 0, 255))
     }
 
+    @Test func punctualLightsUseInverseSquareFalloffAndRange() throws {
+        let backend = try makeBackend()
+        var mesh = quad
+        mesh.streams.append(VertexStream(semantic: .normal, vectors: Array(repeating: SIMD3<Float>(0, 0, 1), count: 4)))
+        func render(distance: Float, range: Float = 0, model: LightDescriptor.FalloffModel = .inverseSquare,
+                    spotAngle: Float? = nil) throws -> Float {
+            var commands = RecordedCommandBuffer(target: RenderTargetDescriptor(width: 64, height: 64))
+            commands.setCamera(CameraUniforms(viewMatrix: .identity, projectionMatrix: .identity))
+            let light = LightDescriptor(kind: spotAngle == nil ? .omni : .spot, intensity: 250,
+                attenuationEndDistance: range, spotInnerAngle: 0, spotOuterAngle: 60, falloffModel: model)
+            let transform = Matrix4x4(translation: SIMD3(0, 0, distance))
+                * Matrix4x4(rotation: Quaternion(angle: spotAngle ?? 0, axis: SIMD3(0, 1, 0)))
+            commands.setLights([LightInstance(light: light, worldTransform: transform)])
+            commands.drawImmediate(mesh, materials: [.lambert(diffuse: SIMD4(repeating: 1))], transform: .identity)
+            let sample = Float(pixel(try backend.snapshot(commands), x: 32, y: 32).x) / 255
+            // The renderer applies a 2.2 output gamma; compare irradiance in linear space.
+            return pow(sample, 2.2)
+        }
+        let near = try render(distance: 1)
+        let far = try render(distance: 2)
+        #expect(near > 0.2 && near < 0.3)
+        #expect(near / far > 3.7 && near / far < 4.3)
+        #expect(try render(distance: 2, range: 1.5) < 0.001)
+        #expect(abs(try render(distance: 1, model: .legacy) - render(distance: 2, model: .legacy)) < 0.01)
+        #expect(try render(distance: 1, spotAngle: 0) > 0.2)
+        #expect(try render(distance: 1, spotAngle: .pi / 2) < 0.001)
+    }
+
 }

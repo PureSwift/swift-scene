@@ -100,6 +100,7 @@ enum GLShaders {
     // 0 ambient, 1 directional, 2 omni, 3 spot.
     uniform int u_lightCount;
     uniform int u_lightType[MAX_LIGHTS];
+    uniform int u_lightInverseSquare[MAX_LIGHTS];
     uniform vec3 u_lightColor[MAX_LIGHTS];
     uniform vec3 u_lightPosition[MAX_LIGHTS];
     uniform vec3 u_lightDirection[MAX_LIGHTS];
@@ -187,12 +188,23 @@ enum GLShaders {
                 float d = length(toLight);
                 l = toLight / max(d, 1e-5);
                 vec3 a = u_lightAttenuation[i];
-                if (a.y > a.x) {
+                if (u_lightInverseSquare[i] != 0) {
+                    attenuation = 1.0 / max(d * d, 1e-10);
+                    if (a.y > 0.0) {
+                        float fraction = d / a.y;
+                        attenuation *= clamp(1.0 - fraction * fraction * fraction * fraction, 0.0, 1.0);
+                    }
+                } else if (a.y > a.x) {
                     attenuation = pow(clamp((a.y - d) / (a.y - a.x), 0.0, 1.0), a.z);
                 }
                 if (type == 3) {
                     float c = dot(-l, u_lightDirection[i]);
-                    attenuation *= smoothstep(u_lightSpot[i].y, u_lightSpot[i].x, c);
+                    if (u_lightInverseSquare[i] != 0) {
+                        float cone = clamp((c - u_lightSpot[i].y) / max(u_lightSpot[i].x - u_lightSpot[i].y, 0.001), 0.0, 1.0);
+                        attenuation *= cone * cone;
+                    } else {
+                        attenuation *= smoothstep(u_lightSpot[i].y, u_lightSpot[i].x, c);
+                    }
                 }
             }
             float lambert = max(dot(n, l), 0.0);

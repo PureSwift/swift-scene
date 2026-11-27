@@ -20,6 +20,11 @@ struct GLTFDocument: Decodable {
     }
     struct Mesh: Decodable { var name: String?; var primitives: [Primitive]; var weights: [Float]? }
     struct Node: Decodable {
+        struct Extensions: Decodable {
+            struct PunctualLight: Decodable { var light: Int }
+            var KHR_lights_punctual: PunctualLight?
+        }
+        var extensions: Extensions?
         var name: String?; var children: [Int]?; var mesh: Int?; var skin: Int?; var camera: Int?
         var matrix: [Float]?; var translation: [Float]?; var rotation: [Float]?; var scale: [Float]?
         var weights: [Float]?
@@ -47,7 +52,7 @@ struct GLTFDocument: Decodable {
     struct Camera: Decodable {
         struct Perspective: Decodable { var yfov: Float; var znear: Float; var zfar: Float?; var aspectRatio: Float? }
         struct Orthographic: Decodable { var xmag: Float; var ymag: Float; var zfar: Float; var znear: Float }
-        var type: String; var perspective: Perspective?; var orthographic: Orthographic?
+        var name: String?; var type: String; var perspective: Perspective?; var orthographic: Orthographic?
     }
     struct Animation: Decodable {
         struct Sampler: Decodable { var input: Int; var output: Int; var interpolation: String? }
@@ -61,5 +66,15 @@ struct GLTFDocument: Decodable {
     var meshes: [Mesh]?; var nodes: [Node]?; var scenes: [Scene]?; var scene: Int?
     var materials: [Material]?; var textures: [Texture]?; var images: [Image]?; var samplers: [Sampler]?
     var skins: [Skin]?; var animations: [Animation]?; var cameras: [Camera]?
+    struct PunctualLight: Decodable {
+        struct Spot: Decodable { var innerConeAngle: Float?; var outerConeAngle: Float? }
+        var name: String?; var type: String; var color: [Float]?; var intensity: Float?
+        var range: Float?; var spot: Spot?
+    }
+    struct Extensions: Decodable {
+        struct PunctualLights: Decodable { var lights: [PunctualLight] }
+        var KHR_lights_punctual: PunctualLights?
+    }
+    var extensions: Extensions?
     var extensionsRequired: [String]?
 }

@@ -138,7 +138,7 @@ pose while skinning continues; `scene.isPaused` pauses updates. CPU skinning pri
 throughput. The GL renderer uses approximate metallic-roughness lighting; environment IBL belongs to Phase 5.
 
 The readers are bounded implementations, not complete replacements for every vendor extension: required glTF
-extensions other than `KHR_materials_unlit` (including compressed geometry), additional joint sets and texture channels beyond UV1 are rejected.
+extensions other than `KHR_materials_unlit` and `KHR_lights_punctual` (including compressed geometry), additional joint sets and texture channels beyond UV1 are rejected.
 Collada controllers, polygon holes and skew transforms are rejected; Collada animation is not imported. SCN
 skinners/morphers, custom geometry classes, embedded platform image objects, constraints, actions and effects are
 not reconstructed. SCN procedural tessellation uses SceneGraph defaults. The retained transform representation
@@ -160,7 +160,9 @@ on Linux. The desktop viewer and snapshot path have been checked on macOS; GLES/
 
 ```sh
 swift run scene-convert model.obj model.glb
-swift run scene-convert --geometry-only scene.scn scene.glb
+swift run scene-convert scene.scn scene.glb
+swift run scene-convert --aspect-ratio 1.777778 scene.scn widescreen.glb
+swift run scene-convert --geometry-only scene.scn meshes.glb
 swift run scene-convert model.obj model.3dmf
 ```
 
@@ -171,8 +173,23 @@ metallic-roughness maps, samplers, alpha modes, PBR factors and `KHR_materials_u
 Legacy Phong/Blinn/Lambert materials are approximated as fully rough, nonmetallic PBR surfaces;
 their ambient and specular terms are not retained. Sampler anisotropy is not serialized.
 
-Animation tracks, physics and GLB backgrounds are not exported. Cameras and lights require
-`--geometry-only` to omit them explicitly. Unsupported vertex streams, separate transparency maps,
+Perspective and orthographic cameras and directional/point/spot lights are exported by default.
+Cameras retain their names, transforms, clipping planes and projection, including infinite perspective
+far planes. Horizontal-FOV and orthographic cameras need a fixed aspect ratio or an explicit
+`--aspect-ratio` width/height number; vertical-FOV perspective cameras can follow the destination viewport.
+
+Lights use [KHR_lights_punctual](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_lights_punctual).
+The reader preserves color, strength, range and spot half angles, and the OpenGL backend applies
+inverse-square distance falloff, a range cutoff and squared spot-cone falloff for imported lights.
+Internal intensity is 1000 times glTF candela (point/spot) or lux (directional); legacy light export
+maps its normalized strength (`intensity / 1000`) to those units. This is an approximation of legacy
+lighting: its distance and spot falloff change to glTF's model on export. Existing SCN rendering
+continues using the legacy falloff by default. The renderer still uses approximate PBR shading.
+Ambient lights, nondefault temperature, shadow settings and custom attenuation have no supported
+mapping and produce errors. `--geometry-only` explicitly omits all cameras and lights, and remains
+necessary for 3DMF export of scenes containing them.
+
+Animation tracks, physics and GLB backgrounds are not exported. Unsupported vertex streams, separate transparency maps,
 independent metallic/roughness textures, texture transforms/intensities, HDR emissive colors,
 front-face culling, custom blend/depth state and unresolved textures produce errors.
 Hidden branches are omitted. Skin/morph meshes are exported at their current evaluated pose.
@@ -184,9 +201,12 @@ Encoding completes before writing. New output publication requires a filesystem 
 support; replacement uses an atomic write.
 
 Library callers can use `GLBEncoder().encodeScene(scene)` or
-`SceneAssetConverter.convert(from: inputURL, to: outputURL, geometryOnly: true)`.
+`SceneAssetConverter.convert(from: inputURL, to: outputURL)`.
+Both APIs accept an optional `cameraAspectRatio` for viewport-dependent cameras.
 GLB tests cover round trips, submeshes, texture pixels and sampling, unlit materials, invalid mesh
-data, SCN conversion, and output preservation after errors.
+data, camera/light round trips, malformed light definitions, SCN conversion, and output preservation
+after errors. GPU tests cover inverse-square light falloff, range and spot cutoffs alongside the
+existing Apple SCN reference comparisons.
 
 ## Writing 3DMF files
 

@@ -278,6 +278,10 @@ public final class OpenGLRenderer {
             }
         }
         uniform("u_lightType") { location in types.withUnsafeBufferPointer { gl.uniform1iv(location, GLsizei(types.count), $0.baseAddress) } }
+        let inverseSquare: [GLint] = lights.map { $0.light.falloffModel == .inverseSquare ? 1 : 0 }
+        uniform("u_lightInverseSquare") { location in
+            inverseSquare.withUnsafeBufferPointer { gl.uniform1iv(location, GLsizei(inverseSquare.count), $0.baseAddress) }
+        }
         setVector3("u_lightColor", lights.map(\.light.radiance))
         setVector3("u_lightPosition", lights.map(\.position))
         setVector3("u_lightDirection", lights.map(\.direction))

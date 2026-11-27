@@ -240,9 +240,9 @@ public extension Matrix4x4 {
         var m = Matrix4x4(diagonal: .zero)
         m[0, 0] = f / aspect
         m[1, 1] = f
-        m[2, 2] = (far + near) / (near - far)
+        m[2, 2] = far == .infinity ? -1 : (far + near) / (near - far)
         m[3, 2] = -1
-        m[2, 3] = 2 * far * near / (near - far)
+        m[2, 3] = far == .infinity ? -2 * near : 2 * far * near / (near - far)
         return m
     }
 
