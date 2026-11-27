@@ -32,7 +32,7 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
 | `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order, parsed with [apple/swift-binary-parsing](https://github.com/apple/swift-binary-parsing)) and text, ported from Quesa — geometry, attributes, textures, lights, cameras, view hints and styles; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; `PNGDecoder` (over [PureSwift/swift-png](https://github.com/PureSwift/swift-png)) and `TextureImageLoader` for PNG/JPEG textures via [PureSwift/swift-jpeg](https://github.com/PureSwift/swift-jpeg); `GLTFDecoder` for glTF/GLB with animation and CPU skinning, `ColladaDecoder`, `SCNArchiveDecoder`, and `SceneAssetFile` for local resources and dependency tracking |
-| `SceneUSD` | Pure-Swift `USDZArchive` container reader/writer; USD stages, USDA/USDC parsing and scene mapping remain planned |
+| `SceneUSD` | Pure-Swift USDZ reader/writer and standalone static USDA stage parser; USDC, composition and scene mapping remain planned |
 | `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
@@ -281,6 +281,28 @@ It rejects duplicate or unsafe paths, unsupported member extensions, compression
 ZIP64, multi-disk archives, data descriptors, preambles, and directory/symlink entries.
 It never extracts files to disk. The checked-in fixture is independently generated with Python's ZIP writer.
 
-This is package I/O only: USDA/USDC parsing, composition, scene mapping and USDZ output from
-`scene-convert` are not implemented yet. The USD implementation will remain pure Swift and
-cross-platform; Apple SwiftUsd is not a dependency.
+`USDStage` parses standalone static USDA definitions from UTF-8 bytes or a package's default layer:
+
+```swift
+let stage = try USDStage(usda: Array("#usda 1.0\ndef Xform \"World\" {}\n".utf8))
+let packagedStage = try USDStage(archive: loaded)
+let world = stage.prim(at: "/World")
+let definitions = stage.traverse()
+let points = world?[property: "points"]?.value
+```
+
+The stage retains prim and property order, declared type names, custom/variability qualifiers,
+metadata, typed dictionaries, arrays, tuples, relationship targets, asset paths and value blocks.
+`USDValue.number` preserves numeric spelling rather than converting integers through floating point.
+This is a syntax model: it does not validate schema-specific attribute types, apply schema defaults,
+resolve assets or evaluate transforms. Traversal includes inactive authored definitions.
+
+The current subset requires ASCII prim/property identifiers, supports UTF-8 strings and asset paths,
+and limits combined hierarchy/value nesting to 32 levels. Composition arcs, overrides/classes,
+variants, list operations, connections, time samples, triple-delimited asset paths and uncommon
+string escapes throw errors. A mesh fixture serialized by OpenUSD 26.11, malformed input tests,
+truncation tests and byte-mutation tests exercise the parser without a native USD dependency.
+
+USDC parsing, composition, scene mapping, USDA writing and USDZ output from `scene-convert` remain
+unimplemented. The USD implementation will remain pure Swift and cross-platform;
+Apple SwiftUsd is not a dependency.
