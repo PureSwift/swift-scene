@@ -13,11 +13,12 @@ let usage = """
 usage: scene-convert [--force] [--geometry-only] [--aspect-ratio ratio] <input> <output>
 Inputs: .3dmf, .3dm, .obj, .gltf, .glb, .dae, .scn, .usda, .usd, .usdz
 USD input supports standalone static USDA polygon scenes; USDC and composition are unsupported.
-Outputs: .glb (embedded textures), .3dmf/.3dm (binary, limited color materials)
+Outputs: .glb (embedded textures), .3dmf/.3dm (binary, limited color materials), .usda/.usd (text), .usdz
+USD export supports static triangle geometry, transforms, normals and UV0; shading export is unsupported.
 Exports the current visible pose. Animation, physics and backgrounds are not exported
 by GLB; legacy materials are approximated as nonmetallic PBR surfaces.
 Legacy lights map normalized strength to glTF intensity; distance falloff changes.
---geometry-only  Omit all cameras and lights; discard USD material bindings/shading prims.
+--geometry-only  Omit cameras/lights; discard unsupported USD materials, opacity and extra vertex streams.
 --aspect-ratio   Positive width/height number for cameras without a fixed aspect.
 --force          Replace an existing output file.
 --               End options, allowing paths beginning with a dash.
@@ -54,6 +55,7 @@ guard paths.count == 2 && !expectsAspectRatio else { fail(usage, code: 64) }
 do {
     try SceneAssetConverter.convert(from: URL(fileURLWithPath: paths[0]), to: URL(fileURLWithPath: paths[1]),
                                     overwrite: overwrite, geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio,
-                                    decoders: USDSceneDecoder(geometryOnly: geometryOnly).fileDecoders)
+                                    decoders: USDSceneDecoder(geometryOnly: geometryOnly).fileDecoders,
+                                    encoders: USDSceneEncoder(geometryOnly: geometryOnly).fileEncoders)
     print("Wrote \(paths[1]) (static scene export)")
 } catch { fail(String(describing: error), code: 65) }
