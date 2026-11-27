@@ -5,3 +5,5 @@
 - `red.jpg`: An 8 by 8 solid-red RGB image, generated from a PPM and encoded with macOS `sips`. Used to verify the independent Swift JPEG decoder with lossy-color tolerance.
 
 These fixtures contain only generated geometry, materials and pixel data. They require no Apple framework at test runtime.
+
+`References/` contains generated keyed archives for nested relative references, repeated instances, axis-angle rotation, and the older `NSData.NS.data` mesh-buffer representation found in the tutorial corpus. `root.scn` references `models/branch.scn` twice; that archive uses the editor’s `file:///` base marker and references `../assets/leaf.scn`, whose material loads `textures/red.jpg`. Regenerate with `python3 Tests/SceneFormatsTests/Fixtures/References/generate.py`. These fixtures derive only from this project's existing generated `reference.scn` and `red.jpg`; no tutorial assets are redistributed.
