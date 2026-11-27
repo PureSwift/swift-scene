@@ -3,14 +3,22 @@ import SceneGraph
 
 /// Local asset loading with dependency tracking for editors and hot-reloading viewers.
 public final class SceneAssetFile {
+    /// Per-file decoder extensions, keyed by lowercase extension without a dot.
+    /// Custom decoders take precedence over built-in codecs and do not resolve external resources.
+    public typealias Decoder = ([UInt8]) throws(SceneFormatError) -> Scene
     public let url: URL
     public private(set) var dependencies: Set<URL> = []
+    private let decoders: [String: Decoder]
 
-    public init(url: URL) { self.url = url.standardizedFileURL }
+    public init(url: URL, decoders: [String: Decoder] = [:]) {
+        self.url = url.standardizedFileURL
+        self.decoders = decoders
+    }
 
     public func load() throws(SceneFormatError) -> Scene {
         dependencies = [url]
         let bytes = try read(url)
+        if let decoder = decoders[url.pathExtension.lowercased()] { return try decoder(bytes) }
         let loader: SceneResourceLoader = { [self] uri in
             guard let reference = URL(string: uri, relativeTo: url), reference.isFileURL else {
                 throw SceneFormatError.unsupported("Only local file resources are supported: \(uri)")
