@@ -14,7 +14,7 @@ usage: scene-convert [--force] [--geometry-only] [--aspect-ratio ratio] <input> 
 Inputs: .3dmf, .3dm, .obj, .gltf, .glb, .dae, .scn, .usda, .usd, .usdz
 USD input supports standalone static USDA polygon scenes; USDC and composition are unsupported.
 Outputs: .glb (embedded textures), .3dmf/.3dm (binary, limited color materials), .usda/.usd (text), .usdz
-USD export supports static triangles, transforms, normals, UV0 and Preview Surface materials; USDZ embeds diffuse, emissive, packed metallic/roughness normal and occlusion maps.
+USD export supports static triangles, transforms, cameras, normals, UV0 and Preview Surface materials; USDZ embeds diffuse, emissive, packed metallic/roughness, normal and occlusion maps.
 Exports the current visible pose. Animation, physics and backgrounds are not exported
 by GLB; legacy materials are approximated as nonmetallic PBR surfaces.
 Legacy lights map normalized strength to glTF intensity; distance falloff changes.
@@ -56,6 +56,6 @@ do {
     try SceneAssetConverter.convert(from: URL(fileURLWithPath: paths[0]), to: URL(fileURLWithPath: paths[1]),
                                     overwrite: overwrite, geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio,
                                     decoders: USDSceneDecoder(geometryOnly: geometryOnly).fileDecoders,
-                                    encoders: USDSceneEncoder(geometryOnly: geometryOnly).fileEncoders)
+                                    encoders: USDSceneEncoder(geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio).fileEncoders)
     print("Wrote \(paths[1]) (static scene export)")
 } catch { fail(String(describing: error), code: 65) }
