@@ -12,12 +12,22 @@ public struct LightDescriptor: Hashable, Sendable {
         case spot
     }
 
+    public enum FalloffModel: Hashable, Sendable {
+        /// The existing start/end/exponent curve and smooth spot cone.
+        case legacy
+        /// Inverse-square distance falloff, range cutoff and squared spot cone for glTF lights.
+        case inverseSquare
+    }
+
+    public var falloffModel: FalloffModel
+
     public var kind: Kind
 
     /// Linear RGB.
     public var color: SIMD3<Float>
 
-    /// In lumens, as SceneKit's: 1000 is a light at its colour.
+    /// Legacy SceneKit-style strength: 1000 is a light at its colour.
+    /// For inverse-square lights, stores 1000 times the candela (point/spot) or lux (directional).
     public var intensity: Float
 
     /// In kelvin; 6500 is white.
@@ -25,14 +35,15 @@ public struct LightDescriptor: Hashable, Sendable {
 
     public var castsShadow: Bool
 
-    /// Where an omni or spot light starts to fade, and where it is gone; an end of 0 never fades.
+    /// Legacy fade start/end; an end of 0 disables the legacy distance fade.
+    /// Inverse-square lights use only the end as a cutoff range; 0 means no cutoff.
     public var attenuationStartDistance: Float
 
     public var attenuationEndDistance: Float
 
     public var attenuationFalloffExponent: Float
 
-    /// A spot light's full-strength cone, and its edge, in degrees.
+    /// Full cone angles in degrees: twice glTF's inner and outer half angles.
     public var spotInnerAngle: Float
 
     public var spotOuterAngle: Float
@@ -47,8 +58,10 @@ public struct LightDescriptor: Hashable, Sendable {
         attenuationEndDistance: Float = 0,
         attenuationFalloffExponent: Float = 2,
         spotInnerAngle: Float = 0,
-        spotOuterAngle: Float = 45
+        spotOuterAngle: Float = 45,
+        falloffModel: FalloffModel = .legacy
     ) {
+        self.falloffModel = falloffModel
         self.kind = kind
         self.color = color
         self.intensity = intensity
@@ -61,7 +74,7 @@ public struct LightDescriptor: Hashable, Sendable {
         self.spotOuterAngle = spotOuterAngle
     }
 
-    /// The colour scaled by the intensity, 1000 lumens as 1.
+    /// The colour scaled by normalized strength (candela/lux for inverse-square lights).
     public var radiance: SIMD3<Float> { color * (intensity / 1000) }
 }
 
@@ -87,6 +100,7 @@ public struct CameraDescriptor: Hashable, Sendable {
 
     public var zNear: Float
 
+    /// Positive infinity represents an infinite perspective far plane.
     public var zFar: Float
 
     /// A fixed asset camera aspect ratio; nil follows the render target.
