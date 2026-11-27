@@ -78,7 +78,9 @@ try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
 
 ## Viewer
 
-`scene-viewer [file]` opens `.3dmf`, `.obj`, `.gltf`, `.glb`, `.dae`, or `.scn`, or a rotating textured demo without a file.
+`scene-viewer [file]` opens `.3dmf`, `.obj`, `.gltf`, `.glb`, `.dae`, `.scn`, or standalone static
+USDA (`.usda`/`.usd`, including inside `.usdz`), or a rotating textured demo without a file.
+For USD assets with materials, `--geometry-only` explicitly discards bindings and shading prims.
 Source assets, external buffers, material libraries, and texture files are checked for changes every half second.
 A successful reload preserves the viewing camera and pause state. A failed reload retains the last valid scene and
 reports the error in the console (and inspector status); saving a corrected file retries it.
@@ -105,6 +107,7 @@ including in snapshots. SDL3 is required: `brew install sdl3` on macOS or `apt i
 ```sh
 swift run scene-viewer model.glb --inspector
 swift run scene-viewer model.dae --normals --snapshot model.bmp
+swift run scene-viewer --geometry-only model.usdz --inspector
 ```
 
 ## Standard asset readers
@@ -155,7 +158,7 @@ on Linux. The desktop viewer and snapshot path have been checked on macOS; GLES/
 
 ## Converting scene files
 
-`scene-convert` loads local 3DMF, OBJ/MTL, glTF/GLB, Collada and SCN assets through
+`scene-convert` loads local 3DMF, OBJ/MTL, glTF/GLB, Collada, SCN and static USDA/USDZ assets through
 `SceneAssetFile`, including their supported external resources:
 
 ```sh
@@ -164,6 +167,7 @@ swift run scene-convert scene.scn scene.glb
 swift run scene-convert --aspect-ratio 1.777778 scene.scn widescreen.glb
 swift run scene-convert --geometry-only scene.scn meshes.glb
 swift run scene-convert model.obj model.3dmf
+swift run scene-convert --geometry-only model.usdz model.glb
 ```
 
 GLB export captures the current visible pose, hierarchy (including pivots), names, mesh streams,
@@ -325,6 +329,17 @@ Inactive subtrees are omitted and visibility is inherited through nodes.
 
 Material bindings and shading prims require explicit `geometryOnly: true`, which discards them in
 favor of default materials. Subdivision, other primvars, inherited primvars, skeletal deformation,
-non-default purposes and unsupported prim types throw. This API does not yet register USD formats
-with the viewer or conversion CLI. USDC, composition, shading networks, USDA writing and USDZ output
-remain unimplemented. Apple SwiftUsd is not a dependency.
+non-default purposes and unsupported prim types throw. Both tools register the USD decoder and retain
+their import options across reloads. Viewer cameras and lights remain outside the USD unit/axis transform.
+Only the source file/package is watched; external USD references and texture loading are unsupported.
+USDC, composition, shading networks, USDA writing and USDZ output remain unimplemented.
+Apple SwiftUsd is not a dependency.
+
+Library clients opt into USD file loading with per-instance registrations, without global mutable state:
+
+```swift
+let decoders = USDSceneDecoder(geometryOnly: true).fileDecoders
+let asset = SceneAssetFile(url: inputURL, decoders: decoders)
+let loadedScene = try asset.load()
+try SceneAssetConverter.convert(from: inputURL, to: outputURL, decoders: decoders)
+```
