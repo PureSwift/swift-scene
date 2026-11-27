@@ -328,7 +328,7 @@ let glb = try GLBEncoder().encodeScene(scene)
 // decodeScene(bytes) also detects USDA or a USDZ package containing USDA.
 ```
 
-Import supports Xform/Scope hierarchies and polygon meshes with `subdivisionScheme = "none"`,
+Import supports Xform/Scope hierarchies, static cameras and polygon meshes with `subdivisionScheme = "none"`,
 including concave faces, hole indices, handedness, double-sided surfaces, normals and `primvars:st`.
 Vertex streams are expanded across triangle corners to preserve normal/UV seams. Constant, uniform,
 vertex, varying and face-varying interpolation are supported, along with indexed UVs. Missing normals
@@ -411,10 +411,24 @@ GLB conversion retains this value through `occlusionTexture.strength`. Unlit occ
 and nonstandard occlusion shader graphs remain unsupported.
 
 Transparency maps, property intensities other than normal/occlusion strength, custom culling/blending/depth
-state, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
+state and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
 use the renderer's alpha blending approximation rather than full optical transmission.
+Static perspective and orthographic cameras round-trip through USDA/USDZ, preserving their
+projection and transforms. Export requires a fixed `CameraDescriptor.aspectRatio` or
+`USDSceneEncoder(cameraAspectRatio:)`; the conversion CLI forwards `--aspect-ratio`.
+Both vertical and horizontal field-of-view inputs are supported; import normalizes to vertical.
+Apertures and focal lengths follow [USD camera units](https://openusd.org/release/api/class_usd_geom_camera.html).
+Stage unit and axis conversion stays in the imported root transform, so local lens distances
+are not converted twice. Camera names use `displayName`. A node carrying both geometry and
+a camera exports a separate Camera child.
+
+Only symmetric lenses with finite clipping planes are supported. Aperture offsets, depth of
+field, motion blur, stereo roles and custom clipping planes are rejected. Infinite far planes
+require an explicit finite distance before export. Geometry-only mode discards camera lenses
+while retaining their child geometry and transforms.
+
 Inherited node opacity is baked into each exported material's constant opacity or diffuse texture
 alpha scale. Shared source materials remain unchanged. Legacy/blended surfaces multiply node
 opacity by material alpha and transparency; masked surfaces apply their cutoff after that
