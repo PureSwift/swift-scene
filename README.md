@@ -170,6 +170,7 @@ swift run scene-convert model.obj model.3dmf
 swift run scene-convert --geometry-only model.usdz model.glb
 swift run scene-convert --geometry-only model.3dmf model.usdz
 swift run scene-convert --geometry-only model.dae model.usda
+swift run scene-convert colored.obj colored.usdz
 ```
 
 GLB export captures the current visible pose, hierarchy (including pivots), names, mesh streams,
@@ -204,7 +205,7 @@ described below.
 
 USD export writes `.usda`, text `.usd`, or `.usdz` containing `scene.usda`. It preserves static
 visible hierarchy, affine transforms (including pivots), triangle geometry, normals and UV0.
-This first export subset does not serialize shading networks: nondefault materials, cameras,
+Constant materials are exported as Preview Surface shaders. Textures, cameras,
 lights and node opacity require `--geometry-only` to explicitly discard them. Other unsupported
 vertex streams are also discarded with that option; double-sided surfaces are retained.
 
@@ -311,7 +312,7 @@ resolve assets or evaluate transforms. Traversal includes inactive authored defi
 
 The current subset requires ASCII prim/property identifiers, supports UTF-8 strings and asset paths,
 and limits combined hierarchy/value nesting to 32 levels. Composition arcs, overrides/classes,
-variants, list operations, connections, time samples, triple-delimited asset paths and uncommon
+variants, list operations, non-shading connections, time samples, triple-delimited asset paths and uncommon
 string escapes throw errors. A mesh fixture serialized by OpenUSD 26.11, malformed input tests,
 truncation tests and byte-mutation tests exercise the parser without a native USD dependency.
 
@@ -340,7 +341,7 @@ favor of default materials. Subdivision, other primvars, inherited primvars, ske
 non-default purposes and unsupported prim types throw. Both tools register the USD decoder and retain
 their import options across reloads. Viewer cameras and lights remain outside the USD unit/axis transform.
 Only the source file/package is watched; external USD references and texture loading are unsupported.
-USDC, composition and shading networks remain unimplemented.
+USDC, composition and shading network evaluation remain unimplemented.
 Apple SwiftUsd is not a dependency.
 
 `USDSceneEncoder` exports the current visible pose to deterministic USDA or a USDZ with a single
@@ -355,8 +356,17 @@ UV V converted back to USD's bottom-origin convention. Hierarchies are limited t
 let bytes = try USDSceneEncoder(encoding: .usdz, geometryOnly: true).encodeScene(scene)
 ```
 
-The default encoder accepts only default materials (including names and double-sidedness).
-Explicit `geometryOnly: true` permits dropping other appearance properties, cameras and lights.
+The encoder emits per-submesh `MaterialBindingAPI` bindings and `UsdPreviewSurface` shaders for
+nondefault constant materials. It preserves linear diffuse/emissive colors, metallic/roughness
+constants and factors, and material alpha (opaque, blend/legacy, or positive mask thresholds).
+Legacy Phong/Blinn/Lambert surfaces become fully rough nonmetallic PBR; their ambient/specular
+terms and shininess are not retained. Unlit surfaces are approximated using emission, zero diffuse
+and IOR 1. Material names use `displayName`. Default materials need no authored shader.
+
+Textures, normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
+state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
+material shading and those node properties. Shading input/output connection paths are parsed
+without evaluation: importing the resulting materials still requires `geometryOnly: true`.
 Animation tracks, skin bindings, physics and backgrounds are not serialized; deformed mesh data
 and transforms capture the current pose. Round-trip tests cover transforms, escaped names,
 submeshes, malformed geometry, deterministic bytes and safe file replacement.
