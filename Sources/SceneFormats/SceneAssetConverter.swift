@@ -8,7 +8,8 @@ public enum SceneAssetConverter {
     public static func convert(from input: URL, to output: URL, overwrite: Bool = false,
                                geometryOnly: Bool = false, cameraAspectRatio: Float? = nil,
                                decoders: [String: SceneAssetFile.Decoder] = [:],
-                               encoders: [String: Encoder] = [:]) throws {
+                               encoders: [String: Encoder] = [:],
+                               resourceDecoders: [String: SceneAssetFile.ResourceDecoder] = [:]) throws {
         let input = input.standardizedFileURL.resolvingSymlinksInPath()
         let output = output.standardizedFileURL.resolvingSymlinksInPath()
         guard input != output else { throw SceneFormatError.unsupported("Input and output must be different files") }
@@ -19,7 +20,7 @@ public enum SceneAssetConverter {
         if !overwrite && FileManager.default.fileExists(atPath: output.path) {
             throw SceneFormatError.unsupported("Output already exists; use --force to replace it")
         }
-        let scene = try SceneAssetFile(url: input, decoders: decoders).load()
+        let scene = try SceneAssetFile(url: input, decoders: decoders, resourceDecoders: resourceDecoders).load()
         if geometryOnly {
             scene.rootNode.enumerateHierarchy { node, _ in node.camera = nil; node.light = nil }
         }
