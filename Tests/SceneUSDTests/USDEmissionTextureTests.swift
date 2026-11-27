@@ -56,6 +56,10 @@ import SceneUSD
             #expect(restored.diffuse.sampler.wrapS == .repeat)
             #expect(restored.diffuseFactor.w == 0.5)
         } else { #expect(restored.diffuse.color == SIMD4(0.25,0.5,0.75,1)) }
+        let glb = try GLBEncoder().encodeScene(decoded)
+        let gltf = try GLTFDecoder().decodeScene(glb)
+        #expect(try material(gltf).descriptor.emissionFactor == restored.emissionFactor)
+        #expect(try material(gltf).descriptor.emission.contents == restored.emission.contents)
         let again = try USDSceneDecoder().decodeScene(encoder.encodeScene(decoded))
         #expect(try material(again).descriptor == restored)
     }
