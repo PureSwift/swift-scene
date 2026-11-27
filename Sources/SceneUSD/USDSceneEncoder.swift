@@ -152,8 +152,11 @@ private struct USDSceneWriter {
                 guard packagesTextures else { throw .unsupported("Textured USD export requires .usdz output") }
                 guard material.lightingModel != .unlit else { throw .unsupported("USDZ unlit texture export") }
                 guard mesh.stream(.textureCoordinate(0)) != nil else { throw USDRead.invalid("USDZ textured mesh requires UV0") }
-                texture = try USDTextureExport(material.diffuse)
+                var property = material.diffuse
+                property.intensity = 1
+                texture = try USDTextureExport(property)
                 constants.diffuse = .color(SIMD4(repeating: 1))
+                constants.diffuse.intensity = material.diffuse.intensity
             }
             var emissionTexture: USDTextureExport?
             if !geometryOnly, case .texture = material.emission.contents {
