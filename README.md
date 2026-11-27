@@ -350,7 +350,7 @@ inputs throw; `geometryOnly: true` discards shading in favor of default material
 Subdivision, other primvars, inherited primvars, skeletal deformation,
 non-default purposes and unsupported prim types throw. Both tools register the USD decoder and retain
 their import options across reloads. Viewer cameras and lights remain outside the USD unit/axis transform.
-Only the source file/package is watched; external USD references and external texture loading are unsupported.
+Standalone USD image dependencies are watched for changes; USDZ watches its package. External USD layer references remain unsupported.
 USDC, composition and general shading network evaluation remain unimplemented.
 Apple SwiftUsd is not a dependency.
 
@@ -384,11 +384,11 @@ anisotropy are required; mip filtering is left to the consuming renderer. Standa
 texture output, secondary UVs and texture transforms remain unsupported.
 USDZ import accepts these diffuse RGB/alpha and emissive RGB graphs, including PNG/JPEG package members, explicit
 sRGB color space, texture scale, zero bias, wrap modes and a direct `st` primvar reader. Image
-paths resolve relative to the default layer inside the package; no external files are opened.
+paths resolve relative to the default layer inside the package; USDZ never opens external files.
 Shared diffuse/opacity sampling is supported; emissive image alpha never controls surface opacity.
 Images shared between diffuse and emissive slots are deduplicated, while samplers and factors remain independent. Constant opacity ignores image alpha, and missing
 UVs, missing/corrupt images, unsupported color spaces or other graph structures produce errors.
-Standalone USDA texture loading and additional texture slots remain unsupported.
+Standalone USDA image loading is available through an explicit resource loader or the file registrations described below.
 
 Unlit diffuse textures round-trip through USDZ using the emission-only Preview Surface
 approximation (zero diffuse, IOR 1). RGB connects to emission; blended and masked materials
@@ -475,13 +475,22 @@ Animation tracks, skin bindings, physics and backgrounds are not serialized; def
 and transforms capture the current pose. Round-trip tests cover transforms, escaped names,
 submeshes, malformed geometry, deterministic bytes and safe file replacement.
 
+Standalone USDA may reference relative PNG/JPEG image paths when a resource resolver is supplied.
+Use `USDSceneDecoder(resourceLoader:)` for library-owned resources, or
+`resourceFileDecoders` with `SceneAssetFile`/`SceneAssetConverter` for local file resolution and
+dependency tracking. The CLI and viewer use these registrations. Paths are resolved relative
+to the layer file, including parent-directory references; literal spaces, percent signs and
+hash characters are encoded for the resource loader. Absolute paths, URL schemes and nested
+package references are unsupported. Missing or corrupt images fail conversion before output
+is written. Byte-only decoding without a resolver still performs no external I/O.
+
 Library clients opt into USD file loading with per-instance registrations, without global mutable state:
 
 ```swift
-let decoders = USDSceneDecoder(geometryOnly: true).fileDecoders
-let asset = SceneAssetFile(url: inputURL, decoders: decoders)
+let decoders = USDSceneDecoder(geometryOnly: true).resourceFileDecoders
+let asset = SceneAssetFile(url: inputURL, resourceDecoders: decoders)
 let loadedScene = try asset.load()
 let encoders = USDSceneEncoder(geometryOnly: true).fileEncoders
 try SceneAssetConverter.convert(from: inputURL, to: outputURL,
-                                decoders: decoders, encoders: encoders)
+                                encoders: encoders, resourceDecoders: decoders)
 ```
