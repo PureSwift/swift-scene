@@ -74,7 +74,7 @@ struct USDMaterialReader {
         let allowed: Set<String> = ["info:id", "outputs:surface", "inputs:diffuseColor", "inputs:emissiveColor",
             "inputs:metallic", "inputs:roughness", "inputs:opacity", "inputs:opacityThreshold", "inputs:ior",
             "inputs:useSpecularWorkflow", "inputs:clearcoat", "inputs:displacement", "inputs:occlusion", "inputs:normal",
-            "inputs:diffuseColor.connect", "inputs:opacity.connect", "inputs:emissiveColor.connect", "inputs:metallic.connect", "inputs:roughness.connect"]
+            "inputs:diffuseColor.connect", "inputs:opacity.connect", "inputs:emissiveColor.connect", "inputs:metallic.connect", "inputs:roughness.connect", "inputs:normal.connect"]
         for property in shader.properties where !allowed.contains(property.name) {
             throw .unsupported("USD shader input or connection: \(property.name); opt into geometryOnly")
         }
@@ -133,6 +133,10 @@ struct USDMaterialReader {
             result.roughness = packed.property
             result.metalnessFactor = packed.factor.z
             result.roughnessFactor = packed.factor.y
+        }
+        if shader[property: "inputs:normal.connect"] != nil {
+            guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
+            result.normal = try self.texture(shader, slot: .normal).property
         }
         return result
     }
