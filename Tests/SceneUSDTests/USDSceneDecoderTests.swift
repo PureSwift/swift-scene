@@ -178,7 +178,7 @@ import SceneGraph
             #expect(throws: SceneFormatError.self) { try decode("def Mesh \"Mesh\" {\(mesh)}") }
         }
         for body in [
-            "def Camera \"Camera\" {}", "def Xform \"X\" (instanceable = true) {}",
+            "def Sphere \"Sphere\" {}", "def Xform \"X\" (instanceable = true) {}",
             "def Xform \"X\" { token[] xformOpOrder = [\"xformOp:translate\"] }",
             "def Xform \"X\" { float3 xformOp:scale = (0,1,1) token[] xformOpOrder = [\"!invert!xformOp:scale\"] }",
             "def Xform \"X\" { float3[] primvars:color = [(1,1,1)] }",
