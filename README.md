@@ -425,7 +425,7 @@ be finite and nonnegative; the final diffuse RGB must remain in 0...1. Emissive 
 to use `emissionFactor`; non-unit emissive texture intensity is rejected.
 
 Transparency maps, other unsupported property intensities, custom culling/blending/depth
-state and lights remain unsupported. Explicit `geometryOnly: true` drops
+state and unsupported light types remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
 use the renderer's alpha blending approximation rather than full optical transmission.
@@ -442,6 +442,18 @@ Only symmetric lenses with finite clipping planes are supported. Aperture offset
 field, motion blur, stereo roles and custom clipping planes are rejected. Infinite far planes
 require an explicit finite distance before export. Geometry-only mode discards camera lenses
 while retaining their child geometry and transforms.
+
+Directional lights round-trip as zero-angle `DistantLight` prims, preserving color, direction,
+names and normalized strength (`LightDescriptor.intensity / 1000`). Export enables light
+normalization and explicitly disables shadows through `ShadowAPI`. Import folds exposure
+into intensity using `2^exposure`. This follows the zero-angle distant-light subset of
+[USD LightAPI](https://openusd.org/release/user_guides/schemas/usdLux/LightAPI.html).
+Legacy directional strength uses the same numerical mapping as GLB export.
+
+Import requires zero angle and explicitly disabled shadows. Nonzero angular extent, temperature
+controls, custom diffuse/specular contributions, filters, light linking and connected inputs
+are rejected. Ambient, point, spot and area lights remain unsupported. Geometry-only mode
+discards directional lights while retaining their transforms and child geometry.
 
 Inherited node opacity is baked into each exported material's constant opacity or diffuse texture
 alpha scale. Shared source materials remain unchanged. Legacy/blended surfaces multiply node
