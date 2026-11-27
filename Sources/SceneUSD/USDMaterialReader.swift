@@ -111,16 +111,23 @@ struct USDMaterialReader {
             result.emission = .color(SIMD4(0,0,0,1))
         } else if ior != 1.5 { throw .unsupported("USD nondefault index of refraction") }
         result.alphaMode = threshold > 0 ? .mask(cutoff: threshold) : (opacity < 1 ? .blend : .opaque)
+        let unlitTexture = result.lightingModel == .unlit && shader[property: "inputs:emissiveColor.connect"] != nil
+        if unlitTexture {
+            let texture = try self.texture(shader, slot: .unlit, opacity: opacity)
+            result.diffuse = texture.property
+            result.diffuseFactor = texture.factor
+            if texture.usesAlpha, threshold == 0 { result.alphaMode = .blend }
+        }
         if shader[property: "inputs:diffuseColor.connect"] != nil {
             guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
             let texture = try self.texture(shader, slot: .diffuse, opacity: opacity)
             result.diffuse = texture.property
             result.diffuseFactor = texture.factor
             if texture.usesAlpha, threshold == 0 { result.alphaMode = .blend }
-        } else if shader[property: "inputs:opacity.connect"] != nil {
+        } else if !unlitTexture, shader[property: "inputs:opacity.connect"] != nil {
             throw .unsupported("USD opacity texture requires a shared diffuse texture")
         }
-        if shader[property: "inputs:emissiveColor.connect"] != nil {
+        if !unlitTexture, shader[property: "inputs:emissiveColor.connect"] != nil {
             guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
             let texture = try self.texture(shader, slot: .emission)
             result.emission = texture.property
