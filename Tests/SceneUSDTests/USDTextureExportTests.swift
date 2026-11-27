@@ -96,7 +96,7 @@ import SceneUSD
         var variants: [MaterialDescriptor] = []
         var invalid = original
         invalid.diffuse.mappingChannel = 1; variants.append(invalid)
-        invalid = original; invalid.diffuse.intensity = 0.5; variants.append(invalid)
+        invalid = original; invalid.diffuse.intensity = -0.5; variants.append(invalid)
         invalid = original; invalid.diffuse.contentsTransform[0,0] = 2; variants.append(invalid)
         invalid = original; invalid.diffuse.sampler.magnificationFilter = .nearest; variants.append(invalid)
         invalid = original; invalid.diffuse.sampler.maxAnisotropy = 4; variants.append(invalid)
