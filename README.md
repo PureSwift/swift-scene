@@ -12,7 +12,7 @@ one data-oriented core, with asset codecs (3DMF, OBJ, glTF, Collada, SCN, USD), 
         +-------------+--------+--------+---------+
         |             |        |                  |
     SceneSDL     SceneFormats  SceneUSD      ScenePhysics
-   (SDL3, GL)     (3DMF, …)   (SwiftUsd)       (Box3D)
+   (SDL3, GL)     (3DMF, …)   (USD/USDZ)       (Box3D)
         |             |        |                  |
         |         SceneGraph  SceneReality        |
         |             |        |                  |
@@ -32,7 +32,7 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
 | `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order, parsed with [apple/swift-binary-parsing](https://github.com/apple/swift-binary-parsing)) and text, ported from Quesa — geometry, attributes, textures, lights, cameras, view hints and styles; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; `PNGDecoder` (over [PureSwift/swift-png](https://github.com/PureSwift/swift-png)) and `TextureImageLoader` for PNG/JPEG textures via [PureSwift/swift-jpeg](https://github.com/PureSwift/swift-jpeg); `GLTFDecoder` for glTF/GLB with animation and CPU skinning, `ColladaDecoder`, `SCNArchiveDecoder`, and `SceneAssetFile` for local resources and dependency tracking |
-| `SceneUSD` | USD stages, `.usda`, `.usdc` and `.usdz` through [apple/SwiftUsd](https://github.com/apple/SwiftUsd)'s OpenUSD, on Apple platforms *(planned)* |
+| `SceneUSD` | Pure-Swift USDZ I/O, static USDA parsing, and polygon mesh/transform import into SceneGraph; USDC and composition remain planned |
 | `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
@@ -78,7 +78,9 @@ try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
 
 ## Viewer
 
-`scene-viewer [file]` opens `.3dmf`, `.obj`, `.gltf`, `.glb`, `.dae`, or `.scn`, or a rotating textured demo without a file.
+`scene-viewer [file]` opens `.3dmf`, `.obj`, `.gltf`, `.glb`, `.dae`, `.scn`, or standalone static
+USDA (`.usda`/`.usd`, including inside `.usdz`), or a rotating textured demo without a file.
+For USD assets with materials, `--geometry-only` explicitly discards bindings and shading prims.
 Source assets, external buffers, material libraries, and texture files are checked for changes every half second.
 A successful reload preserves the viewing camera and pause state. A failed reload retains the last valid scene and
 reports the error in the console (and inspector status); saving a corrected file retries it.
@@ -105,6 +107,7 @@ including in snapshots. SDL3 is required: `brew install sdl3` on macOS or `apt i
 ```sh
 swift run scene-viewer model.glb --inspector
 swift run scene-viewer model.dae --normals --snapshot model.bmp
+swift run scene-viewer --geometry-only model.usdz --inspector
 ```
 
 ## Standard asset readers
@@ -155,7 +158,7 @@ on Linux. The desktop viewer and snapshot path have been checked on macOS; GLES/
 
 ## Converting scene files
 
-`scene-convert` loads local 3DMF, OBJ/MTL, glTF/GLB, Collada and SCN assets through
+`scene-convert` loads local 3DMF, OBJ/MTL, glTF/GLB, Collada, SCN and static USDA/USDZ assets through
 `SceneAssetFile`, including their supported external resources:
 
 ```sh
@@ -164,6 +167,7 @@ swift run scene-convert scene.scn scene.glb
 swift run scene-convert --aspect-ratio 1.777778 scene.scn widescreen.glb
 swift run scene-convert --geometry-only scene.scn meshes.glb
 swift run scene-convert model.obj model.3dmf
+swift run scene-convert --geometry-only model.usdz model.glb
 ```
 
 GLB export captures the current visible pose, hierarchy (including pivots), names, mesh streams,
@@ -251,3 +255,91 @@ and decode the results.
 
 The 3DMF reader is ported from [Quesa](https://github.com/jwwalker/quesa), © 1999–2021 Quesa Developers, under the
 BSD 3-Clause License in `LICENSE-Quesa`.
+
+## USD foundation
+
+`SceneUSD.USDZArchive` reads and writes the uncompressed ZIP container defined by the
+[OpenUSD USDZ specification](https://openusd.org/release/spec_usdz.html). It is pure Swift,
+uses no OpenUSD binaries or C++ interoperability, and is tested on macOS and Linux CI.
+
+```swift
+import SceneUSD
+
+let archive = try USDZArchive(entries: [
+    .init(path: "root.usda", data: Array("#usda 1.0\ndef Xform \"World\" {}\n".utf8))
+])
+let bytes = try archive.encoded()
+let loaded = try USDZArchive(bytes)
+let root = loaded.defaultLayer
+let layerBytes = loaded["root.usda"]?.data
+```
+
+Entry data uses `ArraySlice<UInt8>` views into the input archive; use each slice's `startIndex`
+or iterate it instead of assuming zero-based indices. Lookup is by exact canonical relative path.
+Physical entry order determines the optional default layer. Asset-only and empty packages are
+supported. Encoding preserves member order and bytes, with fixed timestamps and 64-byte alignment;
+ZIP comments and extra metadata are not preserved.
+
+The reader validates local/central headers, member ranges, alignment, UTF-8/ASCII names and CRC-32.
+It rejects duplicate or unsafe paths, unsupported member extensions, compression, encryption,
+ZIP64, multi-disk archives, data descriptors, preambles, and directory/symlink entries.
+It never extracts files to disk. The checked-in fixture is independently generated with Python's ZIP writer.
+
+`USDStage` parses standalone static USDA definitions from UTF-8 bytes or a package's default layer:
+
+```swift
+let stage = try USDStage(usda: Array("#usda 1.0\ndef Xform \"World\" {}\n".utf8))
+let packagedStage = try USDStage(archive: loaded)
+let world = stage.prim(at: "/World")
+let definitions = stage.traverse()
+let points = world?[property: "points"]?.value
+```
+
+The stage retains prim and property order, declared type names, custom/variability qualifiers,
+metadata, typed dictionaries, arrays, tuples, relationship targets, asset paths and value blocks.
+`USDValue.number` preserves numeric spelling rather than converting integers through floating point.
+This is a syntax model: it does not validate schema-specific attribute types, apply schema defaults,
+resolve assets or evaluate transforms. Traversal includes inactive authored definitions.
+
+The current subset requires ASCII prim/property identifiers, supports UTF-8 strings and asset paths,
+and limits combined hierarchy/value nesting to 32 levels. Composition arcs, overrides/classes,
+variants, list operations, connections, time samples, triple-delimited asset paths and uncommon
+string escapes throw errors. A mesh fixture serialized by OpenUSD 26.11, malformed input tests,
+truncation tests and byte-mutation tests exercise the parser without a native USD dependency.
+
+`USDSceneDecoder` converts that static subset into SceneGraph and can feed existing encoders:
+
+```swift
+let scene = try USDSceneDecoder(geometryOnly: true).decodeScene(stage)
+let glb = try GLBEncoder().encodeScene(scene)
+// decodeScene(bytes) also detects USDA or a USDZ package containing USDA.
+```
+
+Import supports Xform/Scope hierarchies and polygon meshes with `subdivisionScheme = "none"`,
+including concave faces, hole indices, handedness, double-sided surfaces, normals and `primvars:st`.
+Vertex streams are expanded across triangle corners to preserve normal/UV seams. Constant, uniform,
+vertex, varying and face-varying interpolation are supported, along with indexed UVs. Missing normals
+are generated per face. UVs are converted to the engine's top-origin convention.
+
+Transforms support ordered translate/scale, axis and six Euler rotations (degrees), orient quaternions,
+affine matrices, inverse operations and reset stacks. Shear/reflection matrices use SceneGraph pivots
+when TRS decomposition would lose them; unrepresentable singular matrices throw. Stage units default
+to centimetres and convert to metres; Y-up and Z-up convert to the engine's Y-up convention.
+Inactive subtrees are omitted and visibility is inherited through nodes.
+
+Material bindings and shading prims require explicit `geometryOnly: true`, which discards them in
+favor of default materials. Subdivision, other primvars, inherited primvars, skeletal deformation,
+non-default purposes and unsupported prim types throw. Both tools register the USD decoder and retain
+their import options across reloads. Viewer cameras and lights remain outside the USD unit/axis transform.
+Only the source file/package is watched; external USD references and texture loading are unsupported.
+USDC, composition, shading networks, USDA writing and USDZ output remain unimplemented.
+Apple SwiftUsd is not a dependency.
+
+Library clients opt into USD file loading with per-instance registrations, without global mutable state:
+
+```swift
+let decoders = USDSceneDecoder(geometryOnly: true).fileDecoders
+let asset = SceneAssetFile(url: inputURL, decoders: decoders)
+let loadedScene = try asset.load()
+try SceneAssetConverter.convert(from: inputURL, to: outputURL, decoders: decoders)
+```

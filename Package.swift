@@ -110,6 +110,7 @@ let package = Package(
                 "SceneCore",
                 "SceneGraph",
                 "SceneFormats",
+                "SceneUSD",
                 "SceneSDL",
                 .product(name: "SDL3Swift", package: "SDL"),
             ],
@@ -124,6 +125,12 @@ let package = Package(
         .testTarget(
             name: "SceneFormatsTests",
             dependencies: ["SceneCore", "SceneGraph", "SceneFormats"],
+            resources: [.copy("Fixtures")],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "SceneUSDTests",
+            dependencies: ["SceneUSD", "SceneFormats"],
             resources: [.copy("Fixtures")],
             swiftSettings: swiftSettings
         ),

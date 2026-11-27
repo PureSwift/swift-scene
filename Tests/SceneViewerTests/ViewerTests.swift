@@ -6,6 +6,49 @@ import SceneFormats
 @testable import scene_viewer
 
 @Suite struct ViewerTests {
+    @Test func usdReloadKeepsOptionsAndFramesInMetres() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".usda")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let source = """
+        #usda 1.0
+        (metersPerUnit = 0.01 upAxis = "Z")
+        def Mesh "Triangle" {
+            point3f[] points = [(0,0,0),(100,0,0),(0,0,100)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0,1,2]
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Material>
+        }
+        def Material "Material" {}
+        """
+        try Data(source.utf8).write(to: file)
+        let options = Options(["--geometry-only", file.path])
+        #expect(options.geometryOnly)
+        let asset = makeViewerAsset(url: file, geometryOnly: options.geometryOnly)
+        #expect(throws: SceneFormatError.self) { try makeViewerAsset(url: file).load() }
+        let scene = prepareScene(try asset.load())
+        #expect(scene.rootNode.transform == .identity)
+        let orbit = framing(scene)
+        #expect((orbit.target - SIMD3(0.5,0.5,0)).length < 0.001)
+        let camera = try #require(scene.rootNode.children.last(where: { $0.name == "camera" }))
+        orbit.apply(to: camera)
+        #expect(abs((camera.worldPosition - orbit.target).length - orbit.distance) < 0.001)
+        #expect((camera.worldTransform.columns.0.xyz.length - 1).magnitude < 0.001)
+
+        var watcher = AssetWatcher()
+        watcher.synchronize(asset)
+        try Data("invalid USD".utf8).write(to: file)
+        let changedToInvalid = watcher.changed(asset, delta: 1)
+        #expect(changedToInvalid)
+        #expect(throws: SceneFormatError.self) { try asset.load() }
+        #expect(!scene.rootNode.hierarchyBoundingBox.isEmpty)
+        try Data(source.replacingOccurrences(of: "Triangle", with: "UpdatedTriangle").utf8).write(to: file)
+        let changedToValid = watcher.changed(asset, delta: 1)
+        #expect(changedToValid)
+        let replacement = try asset.load()
+        #expect(replacement.rootNode.children.first?.children.first?.name == "UpdatedTriangle")
+    }
+
     @Test func inspectorSelectionAndOverlay() {
         let scene = Scene { Node(name: "box", geometry: .box()) }
         var inspector = ViewerInspector(isVisible: true)
