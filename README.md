@@ -32,7 +32,7 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
 | `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order, parsed with [apple/swift-binary-parsing](https://github.com/apple/swift-binary-parsing)) and text, ported from Quesa — geometry, attributes, textures, lights, cameras, view hints and styles; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; `PNGDecoder` (over [PureSwift/swift-png](https://github.com/PureSwift/swift-png)) and `TextureImageLoader` for PNG/JPEG textures via [PureSwift/swift-jpeg](https://github.com/PureSwift/swift-jpeg); `GLTFDecoder` for glTF/GLB with animation and CPU skinning, `ColladaDecoder`, `SCNArchiveDecoder`, and `SceneAssetFile` for local resources and dependency tracking |
-| `SceneUSD` | Pure-Swift USDZ reader/writer and standalone static USDA stage parser; USDC, composition and scene mapping remain planned |
+| `SceneUSD` | Pure-Swift USDZ I/O, static USDA parsing, and polygon mesh/transform import into SceneGraph; USDC and composition remain planned |
 | `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
@@ -303,6 +303,28 @@ variants, list operations, connections, time samples, triple-delimited asset pat
 string escapes throw errors. A mesh fixture serialized by OpenUSD 26.11, malformed input tests,
 truncation tests and byte-mutation tests exercise the parser without a native USD dependency.
 
-USDC parsing, composition, scene mapping, USDA writing and USDZ output from `scene-convert` remain
-unimplemented. The USD implementation will remain pure Swift and cross-platform;
-Apple SwiftUsd is not a dependency.
+`USDSceneDecoder` converts that static subset into SceneGraph and can feed existing encoders:
+
+```swift
+let scene = try USDSceneDecoder(geometryOnly: true).decodeScene(stage)
+let glb = try GLBEncoder().encodeScene(scene)
+// decodeScene(bytes) also detects USDA or a USDZ package containing USDA.
+```
+
+Import supports Xform/Scope hierarchies and polygon meshes with `subdivisionScheme = "none"`,
+including concave faces, hole indices, handedness, double-sided surfaces, normals and `primvars:st`.
+Vertex streams are expanded across triangle corners to preserve normal/UV seams. Constant, uniform,
+vertex, varying and face-varying interpolation are supported, along with indexed UVs. Missing normals
+are generated per face. UVs are converted to the engine's top-origin convention.
+
+Transforms support ordered translate/scale, axis and six Euler rotations (degrees), orient quaternions,
+affine matrices, inverse operations and reset stacks. Shear/reflection matrices use SceneGraph pivots
+when TRS decomposition would lose them; unrepresentable singular matrices throw. Stage units default
+to centimetres and convert to metres; Y-up and Z-up convert to the engine's Y-up convention.
+Inactive subtrees are omitted and visibility is inherited through nodes.
+
+Material bindings and shading prims require explicit `geometryOnly: true`, which discards them in
+favor of default materials. Subdivision, other primvars, inherited primvars, skeletal deformation,
+non-default purposes and unsupported prim types throw. This API does not yet register USD formats
+with the viewer or conversion CLI. USDC, composition, shading networks, USDA writing and USDZ output
+remain unimplemented. Apple SwiftUsd is not a dependency.
