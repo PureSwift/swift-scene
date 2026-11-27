@@ -43,7 +43,7 @@ struct GLTFStorage {
         guard document.asset.version == "2.0", document.asset.minVersion == nil || document.asset.minVersion == "2.0" else {
             throw .unsupported("Only glTF 2.0 is supported")
         }
-        guard (document.extensionsRequired ?? []).isEmpty else {
+        guard (document.extensionsRequired ?? []).allSatisfy({ $0 == "KHR_materials_unlit" }) else {
             throw .unsupported("Required glTF extensions: \((document.extensionsRequired ?? []).joined(separator: ", "))")
         }
         var loaded: [[UInt8]] = []
