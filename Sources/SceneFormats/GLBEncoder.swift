@@ -41,6 +41,7 @@ private struct GLBWriter {
     var textures: [[String: Any]] = []
     var samplers: [[String: Any]] = []
     var usesUnlit = false
+    var usesEmissiveStrength = false
 
     mutating func encode(_ scene: Scene) throws(SceneFormatError) -> [UInt8] {
         let root = try node(scene.rootNode, opacity: 1, depth: 0)
@@ -53,6 +54,7 @@ private struct GLBWriter {
             document[key] = values
         }
         var extensionsUsed: [String] = []
+        if usesEmissiveStrength { extensionsUsed.append("KHR_materials_emissive_strength") }
         if usesUnlit { extensionsUsed.append("KHR_materials_unlit") }
         if !lights.isEmpty {
             extensionsUsed.append("KHR_lights_punctual")
@@ -229,8 +231,14 @@ private struct GLBWriter {
         else { emissionBase = m.emission.color?.xyz ?? .zero }
         let emission = emissionBase * m.emissionFactor * m.emission.intensity
         let emissive = [emission.x, emission.y, emission.z]
-        guard emissive.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw .unsupported("HDR emissive export") }
-        result["emissiveFactor"] = emissive
+        guard emissive.allSatisfy({ $0.isFinite && $0 >= 0 }) else { throw .malformed("Invalid emissive export", offset: nil) }
+        let strength = max(1, emission.x, emission.y, emission.z)
+        if strength > 1 {
+            guard m.lightingModel != .unlit else { throw .unsupported("HDR emission cannot be combined with glTF unlit") }
+            usesEmissiveStrength = true
+            result["extensions"] = ["KHR_materials_emissive_strength": ["emissiveStrength": strength]]
+        }
+        result["emissiveFactor"] = emissive.map { $0 / strength }
         result["emissiveTexture"] = try texture(m.emission, attributes: attributes)
         var normal = m.normal
         normal.intensity = 1
