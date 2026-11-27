@@ -1,3 +1,4 @@
+import Foundation
 import SceneCore
 import SceneFormats
 import SceneGraph
@@ -8,16 +9,17 @@ import SDL3Swift
 //
 //   drag        orbit
 //   wheel       zoom
-//   W           wireframe
+//   F2          wireframe; N normals; H hierarchy; Tab fly; WASD/QE fly movement
 //   space       pause
 //   R           reset the camera
 //   Esc         quit
 //
 // Usage: scene-viewer [options] [file]
 //
-// With a file (.3dmf or .obj), shows it; without, a demo scene.
+// Supports .3dmf, .obj, .gltf, .glb, .dae and .scn, with dependency hot reload.
 //
 // Options:
+//   --inspector / --normals / --wireframe  enable diagnostic overlays
 //   --es               OpenGL ES 3.0 instead of OpenGL 3.3 Core
 //   --frames <n>       quit after n frames
 //   --snapshot <path>  draw one frame, save it as a bitmap, and quit
@@ -29,11 +31,17 @@ struct Options {
     var snapshotPath: String?
     var file: String?
     var view: (yaw: Float, pitch: Float)?
+    var inspector = false
+    var normals = false
+    var wireframe = false
 
     init(_ arguments: [String]) {
         var arguments = arguments.makeIterator()
         while let argument = arguments.next() {
             switch argument {
+            case "--inspector": inspector = true
+            case "--normals": normals = true
+            case "--wireframe": wireframe = true
             case "--es": profile = .es
             case "--frames": frameLimit = arguments.next().flatMap { Int($0) }
             case "--snapshot": snapshotPath = arguments.next()
@@ -90,22 +98,7 @@ func makeScene() -> Scene {
 }
 
 /// A file's scene, with a camera, and lights when it has none.
-func loadScene(_ path: String) throws -> Scene {
-    guard let bytes = readFile(path) else {
-        print("scene-viewer: couldn't read \(path)")
-        exit(1)
-    }
-    let ext = path.split(separator: ".").last.map { $0.lowercased() } ?? ""
-    let scene: Scene
-    if ThreeDMFDecoder.fileExtensions.contains(ext) {
-        scene = try ThreeDMFDecoder().decodeScene(bytes)
-    } else if WavefrontOBJDecoder.fileExtensions.contains(ext) {
-        let directory = path.lastIndex(of: "/").map { String(path[..<$0]) } ?? "."
-        scene = try WavefrontOBJDecoder(baseDirectory: directory, materialLibraryLoader: readFile).decodeScene(bytes)
-    } else {
-        print("scene-viewer: no decoder for .\(ext) files")
-        exit(1)
-    }
+func prepareScene(_ scene: Scene) -> Scene {
     var hasLight = false
     scene.rootNode.enumerateHierarchy { node, stop in
         if node.light != nil { hasLight = true; stop = true }
@@ -149,14 +142,21 @@ func run() throws {
     }
     print("OpenGL: \(backend.renderer.version) — \(backend.renderer.renderer)")
     // Textures named by path, as OBJ materials name them.
-    backend.renderer.textureLoader = TextureImageLoader.load
+    let asset = options.file.map { SceneAssetFile(url: URL(fileURLWithPath: $0)) }
+    backend.renderer.textureLoader = { source in
+        if case .path(let path) = source, let asset, let bytes = asset.readTexture(path) {
+            return TextureImageLoader.decode(bytes)
+        }
+        return TextureImageLoader.load(source)
+    }
+    backend.renderer.isWireframe = options.wireframe
 
-    let scene = try options.file.map(loadScene) ?? makeScene()
+    var scene = try asset.map { prepareScene(try $0.load()) } ?? makeScene()
     let renderer = SceneRenderer(backend: backend, scene: scene)
     // The viewer's own camera, which the orbit moves, rather than any a file brings.
-    let cameraNode = scene.rootNode.children.last { $0.name == "camera" }!
+    guard var cameraNode = scene.rootNode.children.last(where: { $0.name == "camera" }) else { return }
     renderer.pointOfView = cameraNode
-    let initialOrbit = options.file == nil ? OrbitCamera(target: [0.6, 0.4, 0]) : framing(scene)
+    var initialOrbit = options.file == nil ? OrbitCamera(target: [0.6, 0.4, 0]) : framing(scene)
     var orbit = initialOrbit
     if let view = options.view {
         orbit.yaw = radians(degrees: view.yaw)
@@ -165,9 +165,18 @@ func run() throws {
     orbit.apply(to: cameraNode)
     let clear = SIMD4<Float>(0.05, 0.06, 0.08, 1)
 
+    var inspector = ViewerInspector(isVisible: options.inspector, showsNormals: options.normals)
+    inspector.rebuild(scene)
+    var fly = false
+    var keys: Set<Keycode> = []
+    var status = "READY"
+    var watcher = AssetWatcher()
+    if let asset { watcher.synchronize(asset) }
+    print("Drag: orbit/look; wheel: zoom; Tab: fly; WASD/QE: move; F2: wireframe; N: normals; H: hierarchy; up/down: select; V: visibility; F: focus; R: reset; Space: pause")
     if let path = options.snapshotPath {
         var commands = try backend.beginFrame(target: backend.target(clearColor: clear))
         renderer.encode(scene, target: commands.target, into: &commands)
+        inspector.encode(into: &commands, fly: fly, status: status)
         let image = try backend.snapshot(commands)
         guard writeBitmap(image, to: path) else {
             print("scene-viewer: couldn't write \(path)")
@@ -186,24 +195,46 @@ func run() throws {
             switch event {
             case .quit, .window(_, .closeRequested):
                 break running
+            case .window(_, .focusLost):
+                keys.removeAll()
+                dragging = false
             case .mouseButtonDown(_, _, .left, _, _, _):
                 dragging = true
             case .mouseButtonUp(_, _, .left, _, _, _):
                 dragging = false
             case let .mouseMotion(_, _, _, _, _, dx, dy) where dragging:
-                orbit.drag(dx: dx, dy: dy)
+                if fly { orbit.look(dx: dx, dy: dy) }
+                else { orbit.drag(dx: dx, dy: dy) }
                 orbit.apply(to: cameraNode)
             case let .mouseWheel(_, _, _, y, isFlipped, _, _):
                 orbit.zoom(isFlipped ? -y : y)
                 orbit.apply(to: cameraNode)
+            case let .keyUp(_, _, keycode, _, _):
+                keys.remove(keycode)
             case let .keyDown(_, _, keycode, _, _):
+                guard keys.insert(keycode).inserted else { continue }
                 switch keycode {
                 case .escape:
                     break running
                 case .space:
                     scene.isPaused.toggle()
-                case Keycode(character: "w"):
+                case .f2:
                     backend.renderer.isWireframe.toggle()
+                case .tab: fly.toggle()
+                case Keycode(character: "h"): inspector.isVisible.toggle()
+                case Keycode(character: "n"): inspector.showsNormals.toggle()
+                case .up: inspector.move(-1)
+                case .down: inspector.move(1)
+                case Keycode(character: "v"): inspector.selectedNode?.isHidden.toggle()
+                case Keycode(character: "f"):
+                    if let node = inspector.selectedNode {
+                        let bounds = node.hierarchyBoundingBox.transformed(by: node.worldTransform)
+                        if !bounds.isEmpty {
+                            orbit.target = bounds.boundingSphere.center
+                            orbit.distance = max(bounds.boundingSphere.radius * 2.8, 0.01)
+                            orbit.apply(to: cameraNode)
+                        }
+                    }
                 case Keycode(character: "r"):
                     orbit = initialOrbit
                     orbit.apply(to: cameraNode)
@@ -215,10 +246,42 @@ func run() throws {
             }
         }
         let now = clock.now
-        renderer.update(by: now - last)
+        let duration = now - last
+        let delta = min(Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18, 0.1)
         last = now
+        if fly {
+            func pressed(_ c: Unicode.Scalar) -> Float { keys.contains(Keycode(character: c)) ? 1 : 0 }
+            orbit.move(forward: pressed("w") - pressed("s"), right: pressed("d") - pressed("a"),
+                       up: pressed("e") - pressed("q"), seconds: Float(delta))
+            orbit.apply(to: cameraNode)
+        }
+        if let asset, watcher.changed(asset, delta: delta) {
+            do {
+                let replacement = prepareScene(try asset.load())
+                guard let camera = replacement.rootNode.children.last(where: { $0.name == "camera" }) else { continue }
+                replacement.isPaused = scene.isPaused
+                scene = replacement
+                cameraNode = camera
+                orbit.apply(to: cameraNode)
+                renderer.scene = scene
+                renderer.pointOfView = cameraNode
+                initialOrbit = framing(scene)
+                inspector.rebuild(scene)
+                backend.renderer.invalidateTextures()
+                watcher.synchronize(asset)
+                status = "RELOADED"
+                print("Reloaded \(asset.url.lastPathComponent)")
+            } catch {
+                status = "RELOAD FAILED - SEE CONSOLE"
+                print("Reload failed; retaining scene: \(error)")
+            }
+        }
+        renderer.update(by: .seconds(delta))
         do {
-            try renderer.render(target: backend.target(clearColor: clear))
+            var commands = try backend.beginFrame(target: backend.target(clearColor: clear))
+            renderer.encode(scene, target: commands.target, into: &commands)
+            inspector.encode(into: &commands, fly: fly, status: status)
+            try backend.endFrame(commands)
         } catch .targetUnavailable {
             // Minimized: nothing to draw into.
             SDL.delay(nanoseconds: 16_000_000)
