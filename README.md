@@ -80,7 +80,8 @@ try renderer.render(target: RenderTargetDescriptor(width: 1280, height: 720))
 
 `scene-viewer [file]` opens `.3dmf`, `.obj`, `.gltf`, `.glb`, `.dae`, `.scn`, or standalone static
 USDA (`.usda`/`.usd`, including inside `.usdz`), or a rotating textured demo without a file.
-USD supports directly bound constant Preview Surface materials; `--geometry-only` discards unsupported shading.
+USD supports directly bound Preview Surface constants and packaged diffuse textures;
+`--geometry-only` discards unsupported shading.
 Source assets, external buffers, material libraries, and texture files are checked for changes every half second.
 A successful reload preserves the viewing camera and pause state. A failed reload retains the last valid scene and
 reports the error in the console (and inspector status); saving a corrected file retries it.
@@ -340,16 +341,16 @@ to centimetres and convert to metres; Y-up and Z-up convert to the engine's Y-up
 Inactive subtrees are omitted and visibility is inherited through nodes.
 
 Material import resolves direct all-purpose bindings, including inheritance and descendant overrides,
-to a single constant `UsdPreviewSurface` shader. Diffuse/emissive colors, metallic/roughness, alpha
+to a single `UsdPreviewSurface` shader. Diffuse/emissive colors, metallic/roughness, alpha
 and positive opacity masks map to material descriptors. The exporter's emission-only unlit approximation
 is recognized. Binding and connection targets currently require absolute paths. Unbound shading
-definitions are ignored. Collection/purpose bindings, stronger-than-descendants bindings, textures,
+definitions are ignored. Collection/purpose bindings, stronger-than-descendants bindings, arbitrary
 shader input connections, specular workflow and nondefault clearcoat/IOR/normal/displacement/occlusion
 inputs throw; `geometryOnly: true` discards shading in favor of default materials.
 Subdivision, other primvars, inherited primvars, skeletal deformation,
 non-default purposes and unsupported prim types throw. Both tools register the USD decoder and retain
 their import options across reloads. Viewer cameras and lights remain outside the USD unit/axis transform.
-Only the source file/package is watched; external USD references and texture loading are unsupported.
+Only the source file/package is watched; external USD references and external texture loading are unsupported.
 USDC, composition and general shading network evaluation remain unimplemented.
 Apple SwiftUsd is not a dependency.
 
@@ -381,7 +382,12 @@ PNG rows retain their original orientation while mesh UV V is flipped for USD. C
 mirror and transparent-black border wrapping are supported. Linear min/mag filters and unit
 anisotropy are required; mip filtering is left to the consuming renderer. Standalone USDA
 texture output, unlit textures, secondary UVs and texture transforms remain unsupported.
-Textured USD import still requires geometry-only mode.
+USDZ import accepts this diffuse RGB/alpha graph, including PNG/JPEG package members, explicit
+sRGB color space, texture scale, zero bias, wrap modes and a direct `st` primvar reader. Image
+paths resolve relative to the default layer inside the package; no external files are opened.
+Shared diffuse/opacity sampling is supported. Constant opacity ignores image alpha, and missing
+UVs, missing/corrupt images, unsupported color spaces or other graph structures produce errors.
+Standalone USDA texture loading and additional texture slots remain unsupported.
 
 Normal/occlusion/transparency/emission maps, property intensities, custom culling/blending/depth
 state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
