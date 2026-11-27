@@ -14,7 +14,7 @@ usage: scene-convert [--force] [--geometry-only] [--aspect-ratio ratio] <input> 
 Inputs: .3dmf, .3dm, .obj, .gltf, .glb, .dae, .scn, .usda, .usd, .usdz
 USD input supports standalone static USDA polygon scenes; USDC and composition are unsupported.
 Outputs: .glb (embedded textures), .3dmf/.3dm (binary, limited color materials), .usda/.usd (text), .usdz
-USD export supports static triangles, transforms, normals, UV0 and Preview Surface materials; USDZ embeds diffuse textures.
+USD export supports static triangles, transforms, normals, UV0 and Preview Surface materials; USDZ embeds diffuse and emissive textures.
 Exports the current visible pose. Animation, physics and backgrounds are not exported
 by GLB; legacy materials are approximated as nonmetallic PBR surfaces.
 Legacy lights map normalized strength to glTF intensity; distance falloff changes.
