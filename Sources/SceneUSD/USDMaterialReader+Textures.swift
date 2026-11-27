@@ -2,7 +2,7 @@ import SceneCore
 import SceneFormats
 
 extension USDMaterialReader {
-    enum TextureSlot { case diffuse, emission, metallicRoughness, normal, occlusion }
+    enum TextureSlot { case diffuse, unlit, emission, metallicRoughness, normal, occlusion }
 
     /// Reads supported UV0 texture graphs. Assets stay inside the archive.
     func texture(_ surface: USDPrim, slot: TextureSlot, opacity: Float = 1) throws(SceneFormatError)
@@ -13,7 +13,7 @@ extension USDMaterialReader {
         let input: String
         switch slot {
         case .diffuse: input = "inputs:diffuseColor.connect"
-        case .emission: input = "inputs:emissiveColor.connect"
+        case .emission, .unlit: input = "inputs:emissiveColor.connect"
         case .metallicRoughness: input = "inputs:metallic.connect"
         case .normal: input = "inputs:normal.connect"
         case .occlusion: input = "inputs:occlusion.connect"
@@ -81,7 +81,7 @@ extension USDMaterialReader {
               reader.properties.allSatisfy({ ["info:id", "inputs:varname", "outputs:result"].contains($0.name) }) else {
             throw .unsupported("USD texture requires a direct st primvar reader")
         }
-        let alphaConnection = slot != .diffuse ? nil : try USDRead.attribute(surface, "inputs:opacity.connect", types: ["float"])
+        let alphaConnection = (slot != .diffuse && slot != .unlit) ? nil : try USDRead.attribute(surface, "inputs:opacity.connect", types: ["float"])
         if let alphaConnection, try target(alphaConnection) != texturePath + ".outputs:a" {
             throw .unsupported("USD opacity must use the diffuse texture alpha")
         }
@@ -92,7 +92,7 @@ extension USDMaterialReader {
         guard let entry = archive[entryPath] else { throw USDRead.invalid("Missing USDZ texture \(entryPath)") }
         var image = try TextureImageLoader.decodeImage(Array(entry.data))
         // Constant opacity is independent of image alpha. Clear it before ordinary material blending.
-        if slot == .diffuse, alphaConnection == nil {
+        if slot == .diffuse || slot == .unlit, alphaConnection == nil {
             for y in 0..<image.height {
                 for x in 0..<image.width { image.pixels[y * image.bytesPerRow + x * 4 + 3] = 255 }
             }
