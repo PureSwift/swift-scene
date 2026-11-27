@@ -128,6 +128,12 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
         .testTarget(
+            name: "SceneUSDTests",
+            dependencies: ["SceneUSD", "SceneFormats"],
+            resources: [.copy("Fixtures")],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
             name: "ScenePhysicsTests",
             dependencies: ["SceneCore", "SceneGraph", "ScenePhysics"],
             swiftSettings: swiftSettings
