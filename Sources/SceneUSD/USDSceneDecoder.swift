@@ -3,7 +3,7 @@ import SceneFormats
 import SceneGraph
 
 /// Imports standalone static USDA (including USDA inside USDZ) into a Y-up, metre-based scene.
-/// Supports polygon meshes, Xforms, Scopes and directly bound constant Preview Surface materials.
+/// Supports static geometry and Preview Surface materials, including packaged diffuse textures.
 public struct USDSceneDecoder: SceneAssetDecoder {
     public static let fileExtensions = ["usda", "usd", "usdz"]
 
@@ -18,13 +18,18 @@ public struct USDSceneDecoder: SceneAssetDecoder {
 
     public func decodeScene(_ data: [UInt8]) throws(SceneFormatError) -> Scene {
         if data.prefix(4).elementsEqual([0x50, 0x4b, 3, 4]) {
-            return try decodeScene(USDStage(archive: USDZArchive(data)))
+            let archive = try USDZArchive(data)
+            return try decodeScene(USDStage(archive: archive), archive: archive)
         }
         if data.prefix(8).elementsEqual(Array("PXR-USDC".utf8)) { throw .unsupported("USDC Crate layers") }
         return try decodeScene(USDStage(usda: data))
     }
 
     public func decodeScene(_ stage: USDStage) throws(SceneFormatError) -> Scene {
+        try decodeScene(stage, archive: nil)
+    }
+
+    private func decodeScene(_ stage: USDStage, archive: USDZArchive?) throws(SceneFormatError) -> Scene {
         let scene = Scene()
         let units = try USDRead.scalar(stage.metadata["metersPerUnit"] ?? .number("0.01"))
         guard units > 0 else { throw USDRead.invalid("metersPerUnit must be positive") }
@@ -34,7 +39,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
         scene.rootNode.orientation = rotation
         scene.rootNode.scale = SIMD3(repeating: units)
         for prim in stage.rootPrims {
-            if let node = try node(prim, parentWorld: .identity, materials: USDMaterialReader(stage: stage), inheritedMaterial: nil) { scene.rootNode.addChild(node) }
+            if let node = try node(prim, parentWorld: .identity, materials: USDMaterialReader(stage: stage, archive: archive), inheritedMaterial: nil) { scene.rootNode.addChild(node) }
         }
         return scene
     }
@@ -86,6 +91,9 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             let material = Material(boundMaterial ?? .default)
             if let value = try USDRead.attribute(prim, "doubleSided", types: ["bool"]) { material.isDoubleSided = try USDRead.boolean(value) }
             result.geometry = Geometry(mesh: try USDMesh.make(prim), materials: [material])
+            if case .texture = material.diffuse.contents, result.geometry?.mesh.stream(.textureCoordinate(0)) == nil {
+                throw USDRead.invalid("USD textured mesh requires primvars:st")
+            }
             result.geometry?.name = result.name
         }
         let world = parentWorld * local
