@@ -89,8 +89,9 @@ private struct USDSceneWriter {
             line("}", depth: depth + 1)
         }
         if !geometryOnly, let light = node.light {
-            let attributes = try USDDistantLight.attributes(light)
-            line("def DistantLight \"Light\" (", depth: depth + 1)
+            let point = light.kind == .omni
+            let attributes = try USDDistantLight.attributes(light, point: point)
+            line("def \(point ? "SphereLight" : "DistantLight") \"Light\" (", depth: depth + 1)
             line("apiSchemas = [\"ShadowAPI\"]", depth: depth + 2)
             if let name = light.name { line("displayName = \(try quoted(name))", depth: depth + 2) }
             line(")", depth: depth + 1)
