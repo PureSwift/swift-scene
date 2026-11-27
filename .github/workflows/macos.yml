@@ -1,0 +1,33 @@
+name: macOS
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    name: macOS 26 (arm64)
+    runs-on: macos-26
+    env:
+      SWIFT_VERSION: 6.4.2
+      # Missing graphics must fail this job, not skip the screenshot comparison.
+      SCENE_REQUIRE_RENDER_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install sdl3 pkg-config swiftly
+
+      - name: Install Swift
+        working-directory: /tmp
+        run: |
+          swiftly init --assume-yes --quiet-shell-followup --skip-install --no-modify-profile
+          swiftly install "$SWIFT_VERSION" --use --assume-yes
+          swiftly run swift --version
+
+      - name: Build
+        run: swiftly run swift build --build-tests
+
+      - name: Test
+        run: swiftly run swift test --skip-build
