@@ -108,7 +108,7 @@ import SceneUSD
         #expect(throws: SceneFormatError.self) { try USDSceneEncoder().encodeScene(scene) }
         #expect(try !USDSceneEncoder(geometryOnly: true).encodeScene(scene).isEmpty)
         geometry.materials = [Material()]
-        scene.rootNode.opacity = 0.5
+        scene.rootNode.opacity = .nan
         #expect(throws: SceneFormatError.self) { try USDSceneEncoder().encodeScene(scene) }
         scene.rootNode.opacity = 1
         scene.rootNode.camera = Camera()
