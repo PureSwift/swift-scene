@@ -2,22 +2,22 @@ import SceneCore
 import SceneFormats
 
 extension USDMaterialReader {
-    /// Reads only the UV0 -> UsdUVTexture -> diffuse/alpha graph. Assets stay inside the archive.
-    func diffuseTexture(_ surface: USDPrim, opacity: Float) throws(SceneFormatError)
+    /// Reads only the UV0 -> UsdUVTexture -> diffuse/alpha or emissive graph. Assets stay inside the archive.
+    func colorTexture(_ surface: USDPrim, opacity: Float, isEmission: Bool = false) throws(SceneFormatError)
         -> (property: MaterialProperty, factor: SIMD4<Float>, usesAlpha: Bool) {
         guard let archive, let layer = archive.defaultLayer else {
             throw .unsupported("USD textures require a USDZ package")
         }
-        guard let colorConnection = try USDRead.attribute(surface, "inputs:diffuseColor.connect", types: ["color3f"]) else {
-            throw USDRead.invalid("Missing USD diffuse texture connection")
+        guard let colorConnection = try USDRead.attribute(surface, isEmission ? "inputs:emissiveColor.connect" : "inputs:diffuseColor.connect", types: ["color3f"]) else {
+            throw USDRead.invalid("Missing USD color texture connection")
         }
         let path = try target(colorConnection)
         let suffix = ".outputs:rgb"
-        guard path.hasSuffix(suffix) else { throw .unsupported("USD diffuse texture must use RGB output") }
+        guard path.hasSuffix(suffix) else { throw .unsupported("USD color texture must use RGB output") }
         let texturePath = String(path.dropLast(suffix.count))
         let texture = try activePrim(at: texturePath, type: "Shader")
         guard try USDRead.attribute(texture, "info:id", types: ["token"]) == .string("UsdUVTexture") else {
-            throw .unsupported("USD diffuse source must be UsdUVTexture")
+            throw .unsupported("USD color source must be UsdUVTexture")
         }
         let allowed: Set<String> = ["info:id", "inputs:file", "inputs:st.connect", "inputs:sourceColorSpace",
             "inputs:wrapS", "inputs:wrapT", "inputs:scale", "inputs:bias", "outputs:rgb", "outputs:a"]
@@ -25,7 +25,7 @@ extension USDMaterialReader {
             throw .unsupported("USD texture graph has unsupported inputs")
         }
         guard try USDRead.attribute(texture, "inputs:sourceColorSpace", types: ["token"]) == .string("sRGB") else {
-            throw .unsupported("USD diffuse textures require explicit sRGB color space")
+            throw .unsupported("USD color textures require explicit sRGB color space")
         }
         if let bias = try USDRead.attribute(texture, "inputs:bias", types: ["float4"]),
            try USDRead.tuple(bias, count: 4) != [0,0,0,0] {
@@ -35,7 +35,8 @@ extension USDMaterialReader {
         if let scale = try USDRead.attribute(texture, "inputs:scale", types: ["float4"]) {
             scaleValues = try USDRead.tuple(scale, count: 4)
         } else { scaleValues = [1,1,1,1] }
-        guard scaleValues.allSatisfy({ (0...1).contains($0) }) else { throw USDRead.invalid("USD texture scale outside 0...1") }
+        guard scaleValues.prefix(3).allSatisfy({ $0 >= 0 && (isEmission || $0 <= 1) }),
+              (0...1).contains(scaleValues[3]) else { throw USDRead.invalid("USD texture scale outside supported range") }
         guard let st = try USDRead.attribute(texture, "inputs:st.connect", types: ["float2"]) else {
             throw .unsupported("USD texture requires UV primvar connection")
         }
@@ -47,7 +48,7 @@ extension USDMaterialReader {
               reader.properties.allSatisfy({ ["info:id", "inputs:varname", "outputs:result"].contains($0.name) }) else {
             throw .unsupported("USD texture requires a direct st primvar reader")
         }
-        let alphaConnection = try USDRead.attribute(surface, "inputs:opacity.connect", types: ["float"])
+        let alphaConnection = isEmission ? nil : try USDRead.attribute(surface, "inputs:opacity.connect", types: ["float"])
         if let alphaConnection, try target(alphaConnection) != texturePath + ".outputs:a" {
             throw .unsupported("USD opacity must use the diffuse texture alpha")
         }
@@ -58,7 +59,7 @@ extension USDMaterialReader {
         guard let entry = archive[entryPath] else { throw USDRead.invalid("Missing USDZ texture \(entryPath)") }
         var image = try TextureImageLoader.decodeImage(Array(entry.data))
         // Constant opacity is independent of image alpha. Clear it before ordinary material blending.
-        if alphaConnection == nil {
+        if !isEmission, alphaConnection == nil {
             for y in 0..<image.height {
                 for x in 0..<image.width { image.pixels[y * image.bytesPerRow + x * 4 + 3] = 255 }
             }
