@@ -21,7 +21,10 @@ public final class SceneAssetFile {
         case "3dmf", "3dm": return try ThreeDMFDecoder().decodeScene(bytes)
         case "gltf", "glb": return try GLTFDecoder(resourceLoader: loader).decodeScene(bytes)
         case "dae": return try ColladaDecoder(resourceLoader: loader).decodeScene(bytes)
-        case "scn": return try SCNArchiveDecoder(resourceLoader: loader).decodeScene(bytes)
+        case "scn":
+            var decoder = SCNArchiveDecoder(resourceLoader: loader)
+            decoder.sourcePath = url.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? url.lastPathComponent
+            return try decoder.decodeScene(bytes)
         case "obj":
             return try WavefrontOBJDecoder(baseDirectory: url.deletingLastPathComponent().path,
                 materialLibraryLoader: { [self] path in try? read(URL(fileURLWithPath: path)) }).decodeScene(bytes)
