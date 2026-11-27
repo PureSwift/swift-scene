@@ -8,19 +8,19 @@ import SDL3Swift
 
 /// Whether a window can be opened here: not on a headless build machine. SDL's video starts on the main thread.
 @MainActor
-private func canOpenWindow() -> Bool {
-    // CI must fail on unavailable graphics instead of silently skipping render comparisons.
-    if ProcessInfo.processInfo.environment["SCENE_REQUIRE_RENDER_TESTS"] == "1" { return true }
+private func canOpenWindow() throws -> Bool {
     do {
         try SDL.initialize(subSystems: [.video])
         return true
     } catch {
+        // Required CI tests must report initialization failures instead of being skipped.
+        if ProcessInfo.processInfo.environment["SCENE_REQUIRE_RENDER_TESTS"] == "1" { throw error }
         return false
     }
 }
 
 // One window at a time: SDL's video functions want a single thread.
-@Suite(.serialized, .enabled("Needs a display") { await canOpenWindow() })
+@Suite(.serialized, .enabled("Needs a display") { try await canOpenWindow() })
 @MainActor
 struct OpenGLRendererTests {
 
