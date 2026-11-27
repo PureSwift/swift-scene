@@ -142,7 +142,7 @@ pose while skinning continues; `scene.isPaused` pauses updates. CPU skinning pri
 throughput. The GL renderer uses approximate metallic-roughness lighting; environment IBL belongs to Phase 5.
 
 The readers are bounded implementations, not complete replacements for every vendor extension: required glTF
-extensions other than `KHR_materials_unlit` and `KHR_lights_punctual` (including compressed geometry), additional joint sets and texture channels beyond UV1 are rejected.
+extensions other than `KHR_materials_unlit`, `KHR_materials_emissive_strength` and `KHR_lights_punctual` (including compressed geometry), additional joint sets and texture channels beyond UV1 are rejected.
 Collada controllers, polygon holes and skew transforms are rejected; Collada animation is not imported. SCN
 skinners/morphers, custom geometry classes, embedded platform image objects, constraints, actions and effects are
 not reconstructed. SCN procedural tessellation uses SceneGraph defaults. The retained transform representation
@@ -178,6 +178,11 @@ GLB export captures the current visible pose, hierarchy (including pivots), name
 submeshes, opacity and materials. PNG/JPEG textures are embedded as lossless PNG images using
 PureSwift/swift-png. Supported inputs include UV0/UV1, normal/occlusion/emissive maps, packed shared
 metallic-roughness maps, samplers, alpha modes, PBR factors and `KHR_materials_unlit`.
+HDR emission uses `KHR_materials_emissive_strength`: export normalizes the core emissive RGB
+factor and stores its peak as strength; import restores HDR constants or texture multipliers.
+This preserves HDR emission during USDZ-to-GLB conversion. Strength defaults to 1 and must be
+finite and nonnegative; the extension cannot be combined with `KHR_materials_unlit`.
+
 Legacy Phong/Blinn/Lambert materials are approximated as fully rough, nonmetallic PBR surfaces;
 their ambient and specular terms are not retained. Sampler anisotropy is not serialized.
 
@@ -198,7 +203,7 @@ mapping and produce errors. `--geometry-only` explicitly omits all cameras and l
 necessary for 3DMF export of scenes containing them.
 
 Animation tracks, physics and GLB backgrounds are not exported. Unsupported vertex streams, separate transparency maps,
-independent metallic/roughness textures, texture transforms/intensities, HDR emissive colors,
+independent metallic/roughness textures, texture transforms/intensities,
 front-face culling, custom blend/depth state and unresolved textures produce errors.
 Hidden branches are omitted. Skin/morph meshes are exported at their current evaluated pose.
 Binary 3DMF output uses the stricter color-material subset
