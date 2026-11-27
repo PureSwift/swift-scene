@@ -27,8 +27,8 @@ struct USDPreviewMaterial {
         // Validate even legacy inputs that have no exact PBR equivalent, rather than silently losing textures.
         _ = try Self.color(material.ambient)
         _ = try Self.color(material.specular)
-        let base = try Self.color(material.diffuse) * material.diffuseFactor
-        let glow = try Self.color(material.emission)
+        let base = try Self.color(material.diffuse, appliesIntensity: true) * material.diffuseFactor
+        let glow = try Self.color(material.emission, appliesIntensity: true)
         let emission = SIMD3(glow.x, glow.y, glow.z) * material.emissionFactor
         let metal = try Self.scalar(material.metalness) * material.metalnessFactor
         let rough = try Self.scalar(material.roughness) * material.roughnessFactor
@@ -62,18 +62,20 @@ struct USDPreviewMaterial {
         }
     }
 
-    private static func color(_ property: MaterialProperty) throws(SceneFormatError) -> SIMD4<Float> {
-        guard property.intensity == 1 else { throw .unsupported("USD material property intensity; opt into geometryOnly") }
+    private static func color(_ property: MaterialProperty, appliesIntensity: Bool = false) throws(SceneFormatError) -> SIMD4<Float> {
+        guard property.intensity.isFinite, property.intensity >= 0 else { throw USDRead.invalid("Invalid USD material intensity") }
+        guard appliesIntensity || property.intensity == 1 else { throw .unsupported("USD material property intensity; opt into geometryOnly") }
+        let multiplier = SIMD4<Float>(property.intensity, property.intensity, property.intensity, 1)
         switch property.contents {
         case .none: return SIMD4(0, 0, 0, 1)
         case .color(let color):
             guard [color.x, color.y, color.z, color.w].allSatisfy({ $0.isFinite && $0 >= 0 }) else {
                 throw USDRead.invalid("Invalid USD material color")
             }
-            return color
+            return color * multiplier
         case .scalar(let value):
             guard value.isFinite, value >= 0 else { throw USDRead.invalid("Invalid USD material scalar") }
-            return SIMD4(value, value, value, 1)
+            return SIMD4(value, value, value, 1) * multiplier
         case .texture: throw .unsupported("USD texture export; opt into geometryOnly")
         }
     }
