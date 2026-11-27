@@ -390,6 +390,13 @@ Images shared between diffuse and emissive slots are deduplicated, while sampler
 UVs, missing/corrupt images, unsupported color spaces or other graph structures produce errors.
 Standalone USDA texture loading and additional texture slots remain unsupported.
 
+Packed metallic/roughness maps also round-trip through USDZ: roughness uses green, metallic
+uses blue, and both connections share one `UsdUVTexture` in raw color space. Their independent
+factors are stored in the corresponding scale channels. Export requires a physically based
+material with identical metalness/roughness texture properties, including sampler and UV settings.
+Separate maps, single connected channels, different channel packing and sRGB data maps are rejected.
+The packed image may share storage with color textures while each shader retains its own color space.
+
 Normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
 state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
