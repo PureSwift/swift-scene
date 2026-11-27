@@ -218,8 +218,18 @@ private struct GLTFSceneBuilder {
     func material(_ source: GLTFDocument.Material) throws(SceneFormatError) -> Material {
         let pbr = source.pbrMetallicRoughness
         let base = pbr?.baseColorFactor ?? [1, 1, 1, 1]
-        let emission = source.emissiveFactor ?? [0, 0, 0]
+        var emission = source.emissiveFactor ?? [0, 0, 0]
         guard base.count == 4, emission.count == 3 else { throw .malformed("Invalid material color", offset: nil) }
+        let strength = source.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1
+        guard strength.isFinite, strength >= 0,
+              emission.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
+            throw .malformed("Invalid glTF emissive factor or strength", offset: nil)
+        }
+        if source.extensions?.KHR_materials_emissive_strength != nil, source.extensions?.KHR_materials_unlit != nil {
+            throw .unsupported("glTF emissive strength cannot be combined with unlit")
+        }
+        emission = emission.map { $0 * strength }
+        guard emission.allSatisfy(\.isFinite) else { throw .malformed("glTF emissive strength overflow", offset: nil) }
         var material = MaterialDescriptor.physicallyBased(baseColor: SIMD4(base[0], base[1], base[2], base[3]),
                                                          metalness: pbr?.metallicFactor ?? 1, roughness: pbr?.roughnessFactor ?? 1)
         if source.extensions?.KHR_materials_unlit != nil { material.lightingModel = .unlit }
