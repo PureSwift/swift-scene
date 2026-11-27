@@ -323,3 +323,177 @@ public struct BinaryMetafileData: Sendable {
     /// The object's bytes.
     public var bytes: ArraySlice<UInt8> { file[range.lowerBound ..< range.upperBound] }
 }
+
+// 3DMF structure follows Quesa's E3FFW_3DMFBin_Writer.cpp.
+// Copyright (c) 1999-2021, Quesa Developers. All rights reserved.
+// Licensed under the BSD 3-Clause License; see LICENSE-Quesa.
+
+public extension Metafile3D {
+    /// Writes the resolved tree in its current encoding, with references expanded inline.
+    /// Output uses normal mode without a table of contents. Labels and original offsets are omitted.
+    /// Changing `encoding` does not convert payloads; incompatible payloads throw `unsupported`.
+    /// This serializes metafile objects, not renderer-oriented Scene geometry.
+    func encoded() throws(SceneFormatError) -> [UInt8] {
+        var writer = MetafileWriter(encoding: encoding)
+        return try writer.write(self)
+    }
+}
+
+private struct MetafileWriter {
+    let encoding: Metafile3D.Encoding
+    private var customTypes: [String: UInt32] = [:]
+    private var usedCodes: Set<UInt32> = []
+    private var declarations: [String] = []
+
+    init(encoding: Metafile3D.Encoding) {
+        self.encoding = encoding
+    }
+
+    mutating func write(_ file: Metafile3D) throws(SceneFormatError) -> [UInt8] {
+        try collect(file.objects, depth: 0)
+        switch encoding {
+        case .text:
+            var output = "3DMetafile ( \(file.majorVersion) \(file.minorVersion) Normal 0 )\n"
+            for object in file.objects { output += try text(object, depth: 0) }
+            return Array(output.utf8)
+        case .binary:
+            var output = word(0x33444D46) + word(16)
+            output += word(UInt32(file.majorVersion) << 16 | UInt32(file.minorVersion))
+            output += word(0) + word(0) + word(0)
+            var candidate = UInt32.max
+            for name in declarations {
+                while usedCodes.contains(candidate), candidate > 0x80000000 { candidate -= 1 }
+                guard !usedCodes.contains(candidate), candidate >= 0x80000000 else {
+                    throw .unsupported("Too many custom 3DMF types")
+                }
+                customTypes[name] = candidate
+                usedCodes.insert(candidate)
+                var payload = word(candidate) + Array(name.utf8) + [0]
+                while payload.count % 4 != 0 { payload.append(0) }
+                output += try chunk(.type, payload)
+            }
+            for object in file.objects { output += try binary(object) }
+            return output
+        }
+    }
+
+    private mutating func collect(_ objects: [MetafileObject], depth: Int) throws(SceneFormatError) {
+        guard depth < 128 else { throw .unsupported("Metafile tree is too deep to write") }
+        for object in objects {
+            guard ![.container, .beginGroup, .endGroup, .reference, .tableOfContents, .type].contains(object.type) else {
+                throw .unsupported("Write resolved objects rather than structural records")
+            }
+            switch object.type {
+            case .code(let code): usedCodes.insert(code)
+            case .custom(let name):
+                guard !name.utf8.contains(0) else { throw .malformed("A class name contains NUL", offset: nil) }
+                if !declarations.contains(name) { declarations.append(name) }
+            }
+            try collect(object.children, depth: depth + 1)
+        }
+    }
+
+    private func isGroup(_ type: MetafileObjectType) -> Bool {
+        [.group, .displayGroup, .orderedDisplayGroup, .ioProxyDisplayGroup, .lightGroup, .infoGroup].contains(type)
+    }
+
+    private func isGroupState(_ object: MetafileObject) -> Bool {
+        object.type == .displayGroupState || object.type == .displayGroupBoundingBox
+    }
+
+    private func word(_ value: UInt32) -> [UInt8] {
+        let bytes = (0..<4).map { UInt8(truncatingIfNeeded: value >> (24 - $0 * 8)) }
+        if encoding == .binary(.littleEndian) { return bytes.reversed() }
+        return bytes
+    }
+
+    private func chunk(_ type: MetafileObjectType, _ payload: [UInt8]) throws(SceneFormatError) -> [UInt8] {
+        let code: UInt32
+        switch type {
+        case .code(let value): code = value
+        case .custom(let name):
+            guard let value = customTypes[name] else { throw .unsupported("Unregistered class \(name)") }
+            code = value
+        }
+        guard let count = UInt32(exactly: payload.count) else { throw .unsupported("3DMF object exceeds 4 GiB") }
+        return word(code) + word(count) + payload
+    }
+
+    private func binary(_ object: MetafileObject) throws(SceneFormatError) -> [UInt8] {
+        let payload: [UInt8]
+        switch object.data {
+        case .binary(let data):
+            guard encoding == .binary(data.byteOrder) else {
+                throw .unsupported("Binary payload byte order differs from the output encoding")
+            }
+            payload = Array(data.bytes)
+        case .text(let values):
+            guard values.isEmpty else { throw .unsupported("Text-to-binary payload conversion is not implemented") }
+            payload = []
+        }
+        let own = try chunk(object.type, payload)
+        if isGroup(object.type) {
+            let stateCount = object.children.prefix(while: isGroupState).count
+            var header = own
+            for child in object.children.prefix(stateCount) { header += try binary(child) }
+            var output = try chunk(.beginGroup, header)
+            for child in object.children.dropFirst(stateCount) { output += try binary(child) }
+            output += try chunk(.endGroup, [])
+            return output
+        }
+        guard !object.children.isEmpty else { return own }
+        var contents = own
+        for child in object.children { contents += try binary(child) }
+        return try chunk(.container, contents)
+    }
+
+    private func text(_ object: MetafileObject, depth: Int) throws(SceneFormatError) -> String {
+        let name: String
+        switch object.type {
+        case .custom(let value): name = value
+        case .code:
+            guard let value = MetafileObjectType.classNames.first(where: { $0.1 == object.type })?.0 else {
+                throw .unsupported("No text class name for \(object.type)")
+            }
+            name = value
+        }
+        let nameTokens = TextMetafileParser.tokenize(Array(name.utf8))
+        guard !nameTokens.isEmpty, nameTokens.count <= 8,
+              nameTokens.joined(separator: " ") == name,
+              !nameTokens.contains(where: { ["(", ")", "|"].contains($0) || $0.contains("\"") }),
+              !nameTokens[0].hasSuffix(":"),
+              MetafileObjectType(className: name) == object.type else {
+            throw .unsupported("Class name cannot be represented in text 3DMF")
+        }
+        let values: [String]
+        switch object.data {
+        case .text(let tokens):
+            let joined = tokens.joined(separator: " ")
+            guard TextMetafileParser.tokenize(Array(joined.utf8)) == tokens,
+                  !tokens.contains(where: { $0 == "(" || $0 == ")" || $0.hasSuffix(":") }),
+                  tokens.allSatisfy({ !$0.hasPrefix("\"") || ($0.count >= 2 && $0.hasSuffix("\"")) }) else {
+                throw .malformed("Invalid text payload tokens", offset: nil)
+            }
+            values = tokens
+        case .binary(let data):
+            guard data.bytes.isEmpty else { throw .unsupported("Binary-to-text payload conversion is not implemented") }
+            values = []
+        }
+        let indent = String(repeating: "    ", count: depth)
+        func own(_ indentation: String) -> String {
+            indentation + name + " ( " + values.joined(separator: " ") + " )\n"
+        }
+        if isGroup(object.type) {
+            let stateCount = object.children.prefix(while: isGroupState).count
+            var output = indent + "BeginGroup (\n" + own(indent + "    ")
+            for child in object.children.prefix(stateCount) { output += try text(child, depth: depth + 1) }
+            output += indent + ")\n"
+            for child in object.children.dropFirst(stateCount) { output += try text(child, depth: depth + 1) }
+            return output + indent + "EndGroup ( )\n"
+        }
+        guard !object.children.isEmpty else { return own(indent) }
+        var output = indent + "Container (\n" + own(indent + "    ")
+        for child in object.children { output += try text(child, depth: depth + 1) }
+        return output + indent + ")\n"
+    }
+}

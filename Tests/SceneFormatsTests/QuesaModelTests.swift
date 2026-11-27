@@ -49,6 +49,27 @@ func readFile(_ path: String) -> [UInt8]? {
 @Suite(.enabled(if: quesaModels != nil, "Needs a Quesa checkout beside this package"))
 struct QuesaModelTests {
 
+    @Test func roundTripsEverySampleModel() throws {
+        let paths = files(under: quesaModels!, withExtension: "3dmf")
+        #expect(!paths.isEmpty)
+        var failures: [String] = []
+        for path in paths {
+            do {
+                let bytes = try #require(readFile(path))
+                let original = try Metafile3D(bytes)
+                let written = try original.encoded()
+                let restored = try Metafile3D(written)
+                #expect(restored.encoding == original.encoding)
+                #expect(restored.objects.count == original.objects.count)
+                #expect(try restored.encoded() == written)
+                _ = try ThreeDMFDecoder(isStrict: true).decodeScene(written)
+            } catch {
+                failures.append("\(path): \(error)")
+            }
+        }
+        #expect(failures.isEmpty, Comment(rawValue: failures.joined(separator: "\n")))
+    }
+
     @Test func parsesEverySampleModel() throws {
         let paths = files(under: quesaModels!, withExtension: "3dmf")
         #expect(!paths.isEmpty)
