@@ -22,6 +22,38 @@ import SceneGraph
         }
     }
 
+    @Test func archivedMaterialColorSpaces() throws {
+        let url = try #require(Bundle.module.url(forResource: "reference", withExtension: "scn", subdirectory: "Fixtures"))
+        let original = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: Any])
+        // Use the color-space tags emitted by NSKeyedArchiver for NSColor, without AppKit at runtime.
+        func archive(spaceKey: String, spaceID: Int, components: String) throws -> [UInt8] {
+            var plist = original
+            var objects = try #require(plist["$objects"] as? [Any])
+            for index in objects.indices {
+                guard var color = objects[index] as? [String: Any], color["NSRGB"] != nil else { continue }
+                color["NSComponents"] = Data(components.utf8)
+                color["NSCustomColorSpace"] = [spaceKey: spaceID]
+                objects[index] = color
+            }
+            plist["$objects"] = objects
+            return [UInt8](try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0))
+        }
+        for (key, id) in [("NSID", 7), ("NSSpaceID", 14), ("NSSpaceID", 17)] {
+            let scene = try SCNArchiveDecoder().decodeScene(archive(spaceKey: key, spaceID: id, components: "0.2 0.5 0.85 0.4"))
+            let material = try #require(scene.rootNode.childNode(named: "triangle")?.geometry?.materials.first)
+            let color = try #require(material.descriptor.diffuse.color)
+            let expected: SIMD4<Float> = id == 17 ? SIMD4(0.2, 0.5, 0.85, 0.4)
+                : SIMD4(0.03310477, 0.21404114, 0.6920711, 0.4)
+            for channel in 0..<4 { #expect(abs(color[channel] - expected[channel]) < 0.00001) }
+        }
+        for components in ["0.2 invalid 0.85 1", "nan 0.5 0.85 1", "", "1 2 3 4 5"] {
+            let bytes = try archive(spaceKey: "NSID", spaceID: 7, components: components)
+            #expect(throws: SceneFormatError.self) { try SCNArchiveDecoder().decodeScene(bytes) }
+        }
+        let unknown = try archive(spaceKey: "NSSpaceID", spaceID: 999, components: "0.2 0.5 0.85 1")
+        #expect(throws: SceneFormatError.self) { try SCNArchiveDecoder().decodeScene(unknown) }
+    }
+
     @Test func jpegAndArchivedTextureResources() throws {
         let jpegURL = try #require(Bundle.module.url(forResource: "red", withExtension: "jpg", subdirectory: "Fixtures"))
         let bytes = [UInt8](try Data(contentsOf: jpegURL))
