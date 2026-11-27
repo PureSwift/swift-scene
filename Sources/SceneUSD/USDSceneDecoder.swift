@@ -52,6 +52,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             throw .unsupported("USD prim type \(prim.typeName ?? "") at \(prim.path)")
         }
         for property in prim.properties {
+            if property.name.hasSuffix(".connect") { throw .unsupported("USD connections outside shading prims") }
             if property.name.hasPrefix("material:binding"), !geometryOnly {
                 throw .unsupported("USD material bindings; opt into geometryOnly")
             }
