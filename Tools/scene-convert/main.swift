@@ -55,7 +55,7 @@ guard paths.count == 2 && !expectsAspectRatio else { fail(usage, code: 64) }
 do {
     try SceneAssetConverter.convert(from: URL(fileURLWithPath: paths[0]), to: URL(fileURLWithPath: paths[1]),
                                     overwrite: overwrite, geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio,
-                                    decoders: USDSceneDecoder(geometryOnly: geometryOnly).fileDecoders,
-                                    encoders: USDSceneEncoder(geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio).fileEncoders)
+                                    encoders: USDSceneEncoder(geometryOnly: geometryOnly, cameraAspectRatio: cameraAspectRatio).fileEncoders,
+                                    resourceDecoders: USDSceneDecoder(geometryOnly: geometryOnly).resourceFileDecoders)
     print("Wrote \(paths[1]) (static scene export)")
 } catch { fail(String(describing: error), code: 65) }
