@@ -6,3 +6,11 @@ member data aligned to 64 bytes. The script verifies CRCs and alignment after wr
 
 The fixture provides an independent input for the pure-Swift reader. No downloaded
 model assets or OpenUSD binaries are required to run the tests.
+
+# USDA
+
+`triangle.usda` is an original test scene with a translated Xform, triangle mesh, Material,
+relationship, asset path, typed layer dictionary, and absent/blocked property values.
+It was validated and serialized by OpenUSD 26.11 (`Usd.Stage.Open`, `UsdGeom.Mesh`, and
+`Sdf.Layer.Export`). The Swift tests read that serialized output. OpenUSD is not required
+to build the package or run the tests.
