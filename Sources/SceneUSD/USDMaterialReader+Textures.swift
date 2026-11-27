@@ -2,7 +2,7 @@ import SceneCore
 import SceneFormats
 
 extension USDMaterialReader {
-    enum TextureSlot { case diffuse, emission, metallicRoughness, normal }
+    enum TextureSlot { case diffuse, emission, metallicRoughness, normal, occlusion }
 
     /// Reads supported UV0 texture graphs. Assets stay inside the archive.
     func texture(_ surface: USDPrim, slot: TextureSlot, opacity: Float = 1) throws(SceneFormatError)
@@ -16,12 +16,13 @@ extension USDMaterialReader {
         case .emission: input = "inputs:emissiveColor.connect"
         case .metallicRoughness: input = "inputs:metallic.connect"
         case .normal: input = "inputs:normal.connect"
+        case .occlusion: input = "inputs:occlusion.connect"
         }
-        guard let colorConnection = try USDRead.attribute(surface, input, types: [slot == .metallicRoughness ? "float" : (slot == .normal ? "normal3f" : "color3f")]) else {
+        guard let colorConnection = try USDRead.attribute(surface, input, types: [(slot == .metallicRoughness || slot == .occlusion) ? "float" : (slot == .normal ? "normal3f" : "color3f")]) else {
             throw USDRead.invalid("Missing USD color texture connection")
         }
         let path = try target(colorConnection)
-        let suffix = slot == .metallicRoughness ? ".outputs:b" : ".outputs:rgb"
+        let suffix = slot == .metallicRoughness ? ".outputs:b" : (slot == .occlusion ? ".outputs:r" : ".outputs:rgb")
         guard path.hasSuffix(suffix) else { throw .unsupported("Unsupported USD texture output channel") }
         let texturePath = String(path.dropLast(suffix.count))
         if slot == .metallicRoughness {
@@ -35,18 +36,18 @@ extension USDMaterialReader {
             throw .unsupported("USD color source must be UsdUVTexture")
         }
         let allowed: Set<String> = ["info:id", "inputs:file", "inputs:st.connect", "inputs:sourceColorSpace",
-            "inputs:wrapS", "inputs:wrapT", "inputs:scale", "inputs:bias", "outputs:rgb", "outputs:a", "outputs:g", "outputs:b"]
+            "inputs:wrapS", "inputs:wrapT", "inputs:scale", "inputs:bias", "outputs:rgb", "outputs:a", "outputs:g", "outputs:b", "outputs:r"]
         guard texture.properties.allSatisfy({ allowed.contains($0.name) }) else {
             throw .unsupported("USD texture graph has unsupported inputs")
         }
-        guard try USDRead.attribute(texture, "inputs:sourceColorSpace", types: ["token"]) == .string((slot == .metallicRoughness || slot == .normal) ? "raw" : "sRGB") else {
+        guard try USDRead.attribute(texture, "inputs:sourceColorSpace", types: ["token"]) == .string((slot == .metallicRoughness || slot == .normal || slot == .occlusion) ? "raw" : "sRGB") else {
             throw .unsupported("USD color textures require sRGB and packed data textures require raw color space")
         }
         let biasValues: [Float]
         if let bias = try USDRead.attribute(texture, "inputs:bias", types: ["float4"]) {
             biasValues = try USDRead.tuple(bias, count: 4)
         } else { biasValues = [0,0,0,0] }
-        if slot != .normal, biasValues != [0,0,0,0] { throw .unsupported("USD texture bias") }
+        if slot != .normal, slot != .occlusion, biasValues != [0,0,0,0] { throw .unsupported("USD texture bias") }
         let scaleValues: [Float]
         if let scale = try USDRead.attribute(texture, "inputs:scale", types: ["float4"]) {
             scaleValues = try USDRead.tuple(scale, count: 4)
@@ -62,6 +63,12 @@ extension USDMaterialReader {
             normalStrength = 1
             guard scaleValues.prefix(3).allSatisfy({ $0 >= 0 && (slot == .emission || $0 <= 1) }),
                   (0...1).contains(scaleValues[3]) else { throw USDRead.invalid("USD texture scale outside supported range") }
+        }
+        if slot == .occlusion {
+            guard scaleValues[1...3].allSatisfy({ $0 == 1 }),
+                  biasValues == [1 - scaleValues[0], 0, 0, 0] else {
+                throw .unsupported("USD occlusion requires red-channel strength scale and complementary bias")
+            }
         }
         guard let st = try USDRead.attribute(texture, "inputs:st.connect", types: ["float2"]) else {
             throw .unsupported("USD texture requires UV primvar connection")
@@ -101,6 +108,7 @@ extension USDMaterialReader {
         }
         var property = MaterialProperty.texture(.image(image))
         if slot == .normal { property.intensity = normalStrength }
+        if slot == .occlusion { property.intensity = scaleValues[0] }
         property.sampler.wrapS = try wrap(texture, name: "inputs:wrapS")
         property.sampler.wrapT = try wrap(texture, name: "inputs:wrapT")
         return (property, SIMD4(scaleValues[0], scaleValues[1], scaleValues[2], alphaConnection == nil ? opacity : scaleValues[3]), alphaConnection != nil)
