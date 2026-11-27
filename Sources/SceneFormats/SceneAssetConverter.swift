@@ -4,7 +4,7 @@ import SceneGraph
 /// File-to-file conversion of the current scene pose. Writes only after encoding succeeds.
 public enum SceneAssetConverter {
     public static func convert(from input: URL, to output: URL, overwrite: Bool = false,
-                               geometryOnly: Bool = false) throws {
+                               geometryOnly: Bool = false, cameraAspectRatio: Float? = nil) throws {
         let input = input.standardizedFileURL.resolvingSymlinksInPath()
         let output = output.standardizedFileURL.resolvingSymlinksInPath()
         guard input != output else { throw SceneFormatError.unsupported("Input and output must be different files") }
@@ -20,7 +20,7 @@ public enum SceneAssetConverter {
             scene.rootNode.enumerateHierarchy { node, _ in node.camera = nil; node.light = nil }
         }
         let bytes: [UInt8]
-        if format == "glb" { bytes = try GLBEncoder().encodeScene(scene) }
+        if format == "glb" { bytes = try GLBEncoder(cameraAspectRatio: cameraAspectRatio).encodeScene(scene) }
         else { bytes = try ThreeDMFEncoder(encoding: .binary(.bigEndian)).encodeScene(scene) }
         if overwrite {
             try Data(bytes).write(to: output, options: .atomic)
