@@ -193,7 +193,7 @@ import SceneUSD
         invalid = .default; invalid.alphaMode = .mask(cutoff: 0); variants.append(invalid)
         invalid = .default; invalid.alphaMode = .mask(cutoff: .nan); variants.append(invalid)
         invalid = .default; invalid.specular = .texture(.path("specular.png")); variants.append(invalid)
-        invalid = .default; invalid.diffuse.intensity = 0.5; variants.append(invalid)
+        invalid = .default; invalid.diffuse.intensity = -0.5; variants.append(invalid)
         invalid = .default; invalid.cullMode = .front; variants.append(invalid)
         invalid = .default; invalid.blendMode = .add; variants.append(invalid)
         invalid = .default; invalid.writesToDepthBuffer = false; variants.append(invalid)
