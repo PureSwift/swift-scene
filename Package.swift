@@ -33,6 +33,8 @@ let package = Package(
         .package(url: "https://github.com/PureSwift/SDL.git", branch: "master"),
         // The Swift API is newer than the last tag.
         .package(url: "https://github.com/PureSwift/swift-png.git", branch: "master"),
+        // Pin before the Span API so the package retains its macOS 15 deployment target.
+        .package(url: "https://github.com/PureSwift/swift-jpeg.git", revision: "902863baa351bc20907c70d6fc076d6954d51edc"),
         // Pre-1.0: source-stable only within a minor version.
         .package(url: "https://github.com/apple/swift-binary-parsing.git", .upToNextMinor(from: "0.0.4")),
     ],
@@ -54,13 +56,14 @@ let package = Package(
             dependencies: ["SceneCore"],
             swiftSettings: swiftSettings
         ),
-        // Asset codecs: 3DMF, OBJ, glTF, Collada, SCN.
+        // Asset codecs, XML scenes, animation, skinning, and shared resource loading: 3DMF, OBJ, glTF, Collada, SCN.
         .target(
             name: "SceneFormats",
             dependencies: [
                 "SceneCore",
                 "SceneGraph",
                 .product(name: "PNG", package: "swift-png"),
+                .product(name: "JPEG", package: "swift-jpeg"),
                 .product(name: "BinaryParsing", package: "swift-binary-parsing"),
             ],
             swiftSettings: swiftSettings
@@ -86,7 +89,7 @@ let package = Package(
             name: "CBox3D",
             pkgConfig: "box3d"
         ),
-        // The SDL3 host and OpenGL render backend.
+        // The SDL3 host and OpenGL render backend, shared by the asset inspector.
         .target(
             name: "SceneSDL",
             dependencies: [
@@ -121,6 +124,7 @@ let package = Package(
         .testTarget(
             name: "SceneFormatsTests",
             dependencies: ["SceneCore", "SceneGraph", "SceneFormats"],
+            resources: [.copy("Fixtures")],
             swiftSettings: swiftSettings
         ),
         .testTarget(
@@ -135,6 +139,11 @@ let package = Package(
                 "SceneSDL",
                 .product(name: "SDL3Swift", package: "SDL"),
             ],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "SceneViewerTests",
+            dependencies: ["scene-viewer", "SceneCore", "SceneGraph", "SceneFormats"],
             swiftSettings: swiftSettings
         ),
         .testTarget(
