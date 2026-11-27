@@ -39,6 +39,8 @@ struct GLTFDocument: Decodable {
     struct Material: Decodable {
         struct Extensions: Decodable {
             struct Unlit: Decodable {}
+            struct EmissiveStrength: Decodable { var emissiveStrength: Float? }
+            var KHR_materials_emissive_strength: EmissiveStrength?
             var KHR_materials_unlit: Unlit?
         }
         var extensions: Extensions?
