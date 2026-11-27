@@ -169,6 +169,18 @@ private struct USDSceneWriter {
                 normalTexture = try USDTextureExport(property)
                 constants.normal = MaterialProperty()
             }
+            var occlusionTexture: USDTextureExport?
+            let occlusionStrength = material.ambientOcclusion.intensity
+            if !geometryOnly, case .texture = material.ambientOcclusion.contents {
+                guard packagesTextures else { throw .unsupported("Textured USD export requires .usdz output") }
+                guard material.lightingModel != .unlit else { throw .unsupported("USDZ unlit occlusion maps") }
+                guard mesh.stream(.textureCoordinate(0)) != nil else { throw USDRead.invalid("USDZ occlusion map requires UV0") }
+                guard occlusionStrength.isFinite, (0...1).contains(occlusionStrength) else { throw USDRead.invalid("Invalid occlusion strength") }
+                var property = material.ambientOcclusion
+                property.intensity = 1
+                occlusionTexture = try USDTextureExport(property)
+                constants.ambientOcclusion = MaterialProperty()
+            }
             let preview = !geometryOnly && comparable != .default ? try USDPreviewMaterial(constants) : nil
             let materialPath = parentPath + "/Mesh_\(submeshIndex)/Material"
             var faces: [SIMD3<Int>] = []
@@ -237,6 +249,9 @@ private struct USDSceneWriter {
                 if normalTexture != nil {
                     line("normal3f inputs:normal.connect = <\(materialPath)/NormalTexture.outputs:rgb>", depth: shaderDepth)
                 }
+                if occlusionTexture != nil {
+                    line("float inputs:occlusion.connect = <\(materialPath)/OcclusionTexture.outputs:r>", depth: shaderDepth)
+                }
                 if material.lightingModel == .unlit { line("float inputs:ior = 1", depth: shaderDepth) }
                 line("token outputs:surface", depth: shaderDepth)
                 line("}", depth: indent + 1)
@@ -259,6 +274,13 @@ private struct USDSceneWriter {
                                        writeUVReader: texture == nil && emissionTexture == nil && packedTexture == nil,
                                        materialPath: materialPath, depth: indent + 1, colorSpace: "raw",
                                        bias: [-normalStrength, normalStrength, -1, 0])
+                }
+                if let occlusionTexture {
+                    // Match mix(1, red, strength) without altering shared ORM image pixels.
+                    try textureShaders(occlusionTexture, name: "OcclusionTexture", scale: [occlusionStrength, 1, 1, 1],
+                                       writeUVReader: texture == nil && emissionTexture == nil && packedTexture == nil && normalTexture == nil,
+                                       materialPath: materialPath, depth: indent + 1, colorSpace: "raw",
+                                       bias: [1 - occlusionStrength, 0, 0, 0])
                 }
                 line("}", depth: indent)
             }
@@ -297,6 +319,7 @@ private struct USDSceneWriter {
         line("float3 outputs:rgb", depth: depth + 1)
         line("float outputs:a", depth: depth + 1)
         if colorSpace == "raw" {
+            line("float outputs:r", depth: depth + 1)
             line("float outputs:g", depth: depth + 1)
             line("float outputs:b", depth: depth + 1)
         }
