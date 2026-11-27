@@ -307,12 +307,14 @@ let points = world?[property: "points"]?.value
 The stage retains prim and property order, declared type names, custom/variability qualifiers,
 metadata, typed dictionaries, arrays, tuples, relationship targets, asset paths and value blocks.
 `USDValue.number` preserves numeric spelling rather than converting integers through floating point.
+One explicit, prepend or append `apiSchemas` list per prim is accepted and normalized to its
+authored token order for the standalone layer; this does not implement composition across layers.
 This is a syntax model: it does not validate schema-specific attribute types, apply schema defaults,
 resolve assets or evaluate transforms. Traversal includes inactive authored definitions.
 
 The current subset requires ASCII prim/property identifiers, supports UTF-8 strings and asset paths,
 and limits combined hierarchy/value nesting to 32 levels. Composition arcs, overrides/classes,
-variants, list operations, non-shading connections, time samples, triple-delimited asset paths and uncommon
+variants, general list operations, non-shading connections, time samples, triple-delimited asset paths and uncommon
 string escapes throw errors. A mesh fixture serialized by OpenUSD 26.11, malformed input tests,
 truncation tests and byte-mutation tests exercise the parser without a native USD dependency.
 
