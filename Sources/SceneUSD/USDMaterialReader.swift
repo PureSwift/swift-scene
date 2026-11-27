@@ -74,7 +74,7 @@ struct USDMaterialReader {
         let allowed: Set<String> = ["info:id", "outputs:surface", "inputs:diffuseColor", "inputs:emissiveColor",
             "inputs:metallic", "inputs:roughness", "inputs:opacity", "inputs:opacityThreshold", "inputs:ior",
             "inputs:useSpecularWorkflow", "inputs:clearcoat", "inputs:displacement", "inputs:occlusion", "inputs:normal",
-            "inputs:diffuseColor.connect", "inputs:opacity.connect", "inputs:emissiveColor.connect"]
+            "inputs:diffuseColor.connect", "inputs:opacity.connect", "inputs:emissiveColor.connect", "inputs:metallic.connect", "inputs:roughness.connect"]
         for property in shader.properties where !allowed.contains(property.name) {
             throw .unsupported("USD shader input or connection: \(property.name); opt into geometryOnly")
         }
@@ -113,7 +113,7 @@ struct USDMaterialReader {
         result.alphaMode = threshold > 0 ? .mask(cutoff: threshold) : (opacity < 1 ? .blend : .opaque)
         if shader[property: "inputs:diffuseColor.connect"] != nil {
             guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
-            let texture = try colorTexture(shader, opacity: opacity)
+            let texture = try self.texture(shader, slot: .diffuse, opacity: opacity)
             result.diffuse = texture.property
             result.diffuseFactor = texture.factor
             if texture.usesAlpha, threshold == 0 { result.alphaMode = .blend }
@@ -122,9 +122,17 @@ struct USDMaterialReader {
         }
         if shader[property: "inputs:emissiveColor.connect"] != nil {
             guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
-            let texture = try colorTexture(shader, opacity: 1, isEmission: true)
+            let texture = try self.texture(shader, slot: .emission)
             result.emission = texture.property
             result.emissionFactor = SIMD3(texture.factor.x, texture.factor.y, texture.factor.z)
+        }
+        if shader[property: "inputs:metallic.connect"] != nil || shader[property: "inputs:roughness.connect"] != nil {
+            guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
+            let packed = try self.texture(shader, slot: .metallicRoughness)
+            result.metalness = packed.property
+            result.roughness = packed.property
+            result.metalnessFactor = packed.factor.z
+            result.roughnessFactor = packed.factor.y
         }
         return result
     }
