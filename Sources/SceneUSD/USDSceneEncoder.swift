@@ -157,6 +157,18 @@ private struct USDSceneWriter {
                 constants.metalness = .scalar(1)
                 constants.roughness = .scalar(1)
             }
+            var normalTexture: USDTextureExport?
+            let normalStrength = material.normal.intensity
+            if !geometryOnly, case .texture = material.normal.contents {
+                guard packagesTextures else { throw .unsupported("Textured USD export requires .usdz output") }
+                guard material.lightingModel != .unlit else { throw .unsupported("USDZ unlit normal maps") }
+                guard mesh.stream(.textureCoordinate(0)) != nil else { throw USDRead.invalid("USDZ normal map requires UV0") }
+                guard normalStrength >= 0, (normalStrength * 2).isFinite else { throw USDRead.invalid("Invalid normal strength") }
+                var property = material.normal
+                property.intensity = 1
+                normalTexture = try USDTextureExport(property)
+                constants.normal = MaterialProperty()
+            }
             let preview = !geometryOnly && comparable != .default ? try USDPreviewMaterial(constants) : nil
             let materialPath = parentPath + "/Mesh_\(submeshIndex)/Material"
             var faces: [SIMD3<Int>] = []
@@ -222,6 +234,9 @@ private struct USDSceneWriter {
                     line("float inputs:opacity = \(preview.opacity)", depth: shaderDepth)
                 }
                 line("float inputs:opacityThreshold = \(preview.opacityThreshold)", depth: shaderDepth)
+                if normalTexture != nil {
+                    line("normal3f inputs:normal.connect = <\(materialPath)/NormalTexture.outputs:rgb>", depth: shaderDepth)
+                }
                 if material.lightingModel == .unlit { line("float inputs:ior = 1", depth: shaderDepth) }
                 line("token outputs:surface", depth: shaderDepth)
                 line("}", depth: indent + 1)
@@ -238,6 +253,13 @@ private struct USDSceneWriter {
                                        writeUVReader: texture == nil && emissionTexture == nil, materialPath: materialPath,
                                        depth: indent + 1, colorSpace: "raw")
                 }
+                if let normalTexture {
+                    // Flipping mesh V reverses the bitangent: negate tangent-space Y to preserve lighting.
+                    try textureShaders(normalTexture, name: "NormalTexture", scale: [2 * normalStrength, -2 * normalStrength, 2, 1],
+                                       writeUVReader: texture == nil && emissionTexture == nil && packedTexture == nil,
+                                       materialPath: materialPath, depth: indent + 1, colorSpace: "raw",
+                                       bias: [-normalStrength, normalStrength, -1, 0])
+                }
                 line("}", depth: indent)
             }
             line("}", depth: depth)
@@ -245,7 +267,7 @@ private struct USDSceneWriter {
     }
 
     private mutating func textureShaders(_ texture: USDTextureExport, name: String, scale: [Float],
-                                         writeUVReader: Bool, materialPath: String, depth: Int, colorSpace: String = "sRGB") throws(SceneFormatError) {
+                                         writeUVReader: Bool, materialPath: String, depth: Int, colorSpace: String = "sRGB", bias: [Float]? = nil) throws(SceneFormatError) {
         let path: String
         if let existing = imagePaths[texture.image] { path = existing }
         else {
@@ -271,6 +293,7 @@ private struct USDSceneWriter {
         line("token inputs:wrapS = \"\(texture.wrapS)\"", depth: depth + 1)
         line("token inputs:wrapT = \"\(texture.wrapT)\"", depth: depth + 1)
         line("float4 inputs:scale = \(tuple(scale))", depth: depth + 1)
+        if let bias { line("float4 inputs:bias = \(tuple(bias))", depth: depth + 1) }
         line("float3 outputs:rgb", depth: depth + 1)
         line("float outputs:a", depth: depth + 1)
         if colorSpace == "raw" {

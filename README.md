@@ -397,7 +397,14 @@ material with identical metalness/roughness texture properties, including sample
 Separate maps, single connected channels, different channel packing and sRGB data maps are rejected.
 The packed image may share storage with color textures while each shader retains its own color space.
 
-Normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
+Tangent-space normal maps also round-trip through USDZ using raw RGB, signed scale/bias and
+uniform nonnegative XY strength. Export negates tangent-space Y to compensate for the mesh UV V
+flip. Import accepts that encoding or standard positive-Y USD normal decoding, converting the
+green channel for the latter. Image alpha is ignored. Normal maps require UV0; custom tangent
+streams, anisotropic XY strength, object-space normals and unlit normal maps remain unsupported.
+GLB conversion preserves normal strength through `normalTexture.scale`.
+
+Occlusion/transparency maps, property intensities other than normal strength, custom culling/blending/depth
 state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials

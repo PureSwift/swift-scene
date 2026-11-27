@@ -232,7 +232,15 @@ private struct GLBWriter {
         guard emissive.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw .unsupported("HDR emissive export") }
         result["emissiveFactor"] = emissive
         result["emissiveTexture"] = try texture(m.emission, attributes: attributes)
-        result["normalTexture"] = try texture(m.normal, attributes: attributes)
+        var normal = m.normal
+        normal.intensity = 1
+        if var normalTexture = try texture(normal, attributes: attributes) {
+            guard m.normal.intensity.isFinite, m.normal.intensity >= 0 else {
+                throw .malformed("Invalid normal texture strength", offset: nil)
+            }
+            normalTexture["scale"] = m.normal.intensity
+            result["normalTexture"] = normalTexture
+        }
         result["occlusionTexture"] = try texture(m.ambientOcclusion, attributes: attributes)
         switch m.alphaMode {
         case .legacy: result["alphaMode"] = base.w < 1 ? "BLEND" : "OPAQUE"
