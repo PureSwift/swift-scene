@@ -64,9 +64,6 @@ private struct USDSceneWriter {
         guard node.opacity.isFinite, (0...1).contains(node.opacity) else { throw USDRead.invalid("Invalid node opacity") }
         let opacity = geometryOnly ? 1 : parentOpacity * node.opacity
         guard opacity > 0 else { return }
-        if !geometryOnly, node.light != nil {
-            throw .unsupported("USD export of lights; opt into geometryOnly")
-        }
         let path = parentPath + "/" + identifier
         let matrix = node.transform
         guard matrix.columnMajorElements.allSatisfy({ $0.isFinite }),
@@ -89,6 +86,16 @@ private struct USDSceneWriter {
             for attribute in try USDCamera.attributes(camera, aspect: cameraAspectRatio) {
                 line(attribute, depth: depth + 2)
             }
+            line("}", depth: depth + 1)
+        }
+        if !geometryOnly, let light = node.light {
+            let attributes = try USDDistantLight.attributes(light)
+            line("def DistantLight \"Light\" (", depth: depth + 1)
+            line("apiSchemas = [\"ShadowAPI\"]", depth: depth + 2)
+            if let name = light.name { line("displayName = \(try quoted(name))", depth: depth + 2) }
+            line(")", depth: depth + 1)
+            line("{", depth: depth + 1)
+            for attribute in attributes { line(attribute, depth: depth + 2) }
             line("}", depth: depth + 1)
         }
         if let geometry = node.geometry { try mesh(geometry, parentPath: path, depth: depth + 1, opacity: opacity) }
