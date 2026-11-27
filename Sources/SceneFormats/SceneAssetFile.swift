@@ -6,13 +6,17 @@ public final class SceneAssetFile {
     /// Per-file decoder extensions, keyed by lowercase extension without a dot.
     /// Custom decoders take precedence over built-in codecs and do not resolve external resources.
     public typealias Decoder = ([UInt8]) throws(SceneFormatError) -> Scene
+    /// Resource-aware codecs receive the file-relative loader, which records dependencies.
+    public typealias ResourceDecoder = ([UInt8], @escaping SceneResourceLoader) throws(SceneFormatError) -> Scene
     public let url: URL
     public private(set) var dependencies: Set<URL> = []
+    private let resourceDecoders: [String: ResourceDecoder]
     private let decoders: [String: Decoder]
 
-    public init(url: URL, decoders: [String: Decoder] = [:]) {
+    public init(url: URL, decoders: [String: Decoder] = [:], resourceDecoders: [String: ResourceDecoder] = [:]) {
         self.url = url.standardizedFileURL
         self.decoders = decoders
+        self.resourceDecoders = resourceDecoders
     }
 
     public func load() throws(SceneFormatError) -> Scene {
@@ -25,6 +29,7 @@ public final class SceneAssetFile {
             }
             return try read(reference.standardizedFileURL)
         }
+        if let decoder = resourceDecoders[url.pathExtension.lowercased()] { return try decoder(bytes, loader) }
         switch url.pathExtension.lowercased() {
         case "3dmf", "3dm": return try ThreeDMFDecoder().decodeScene(bytes)
         case "gltf", "glb": return try GLTFDecoder(resourceLoader: loader).decodeScene(bytes)
