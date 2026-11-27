@@ -2,10 +2,11 @@ import SceneCore
 import SceneFormats
 
 /// Resolves direct bindings to Preview Surface constants and packaged color textures.
-/// No arbitrary shader evaluation, external asset loading or composition is performed.
+/// External image assets use an explicit resolver; no arbitrary shader evaluation or composition is performed.
 struct USDMaterialReader {
     let stage: USDStage
     let archive: USDZArchive?
+    var resourceLoader: SceneResourceLoader? = nil
 
     func binding(on prim: USDPrim, inherited: MaterialDescriptor?) throws(SceneFormatError) -> MaterialDescriptor? {
         for property in prim.properties where property.name.hasPrefix("material:binding") {
