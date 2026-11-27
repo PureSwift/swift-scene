@@ -19,6 +19,6 @@ to build the package or run the tests.
 
 `preview-surface.usda` was authored with OpenUSD 26.11's Python API. It contains one
 triangle and a bound constant Preview Surface shader with diffuse color (0.25, 0.5,
-0.75), metallic 0.5 and roughness 0.25. The applied schema list is explicit, matching
-the parser's standalone-layer subset. Tests load it and round-trip through USDZ;
+0.75), metallic 0.5 and roughness 0.25. `UsdShade.MaterialBindingAPI.Apply` authors
+the usual `prepend apiSchemas` metadata. Tests load it and round-trip through USDZ;
 running tests does not require OpenUSD.
