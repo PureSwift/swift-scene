@@ -205,7 +205,8 @@ described below.
 
 USD export writes `.usda`, text `.usd`, or `.usdz` containing `scene.usda`. It preserves static
 visible hierarchy, affine transforms (including pivots), triangle geometry, normals and UV0.
-Constant materials are exported as Preview Surface shaders. Textures, cameras,
+Constant materials are exported as Preview Surface shaders; USDZ also embeds diffuse textures.
+Unsupported texture features, cameras,
 lights and node opacity require `--geometry-only` to explicitly discard them. Other unsupported
 vertex streams are also discarded with that option; double-sided surfaces are retained.
 
@@ -352,8 +353,9 @@ Only the source file/package is watched; external USD references and texture loa
 USDC, composition and general shading network evaluation remain unimplemented.
 Apple SwiftUsd is not a dependency.
 
-`USDSceneEncoder` exports the current visible pose to deterministic USDA or a USDZ with a single
-`scene.usda` member. It authors a `Scene` default prim, Y-up coordinates and metre units. Stable
+`USDSceneEncoder` exports the current visible pose to deterministic USDA or a USDZ with a
+`scene.usda` default layer and optional PNG textures. It authors a `Scene` default prim,
+Y-up coordinates and metre units. Stable
 prim identifiers avoid name collisions; original names are stored in `displayName` and restored
 by the decoder. Each submesh becomes a separate Mesh child, so reimport preserves the visual
 hierarchy rather than exact node topology. Indexed and nonindexed triangle lists/strips are
@@ -371,7 +373,17 @@ Legacy Phong/Blinn/Lambert surfaces become fully rough nonmetallic PBR; their am
 terms and shininess are not retained. Unlit surfaces are approximated using emission, zero diffuse
 and IOR 1. Material names use `displayName`. Default materials need no authored shader.
 
-Textures, normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
+USDZ diffuse textures accept in-memory images or local PNG/JPEG paths (JPEG uses PureSwift/swift-jpeg).
+Images are encoded as PNG and deduplicated within the package. A `UsdUVTexture` and
+`UsdPrimvarReader_float2` connect UV0 to diffuse RGB and, unless opaque, texture alpha.
+Linear color/alpha factors are applied through texture scale; source pixels are marked sRGB.
+PNG rows retain their original orientation while mesh UV V is flipped for USD. Clamp, repeat,
+mirror and transparent-black border wrapping are supported. Linear min/mag filters and unit
+anisotropy are required; mip filtering is left to the consuming renderer. Standalone USDA
+texture output, unlit textures, secondary UVs and texture transforms remain unsupported.
+Textured USD import still requires geometry-only mode.
+
+Normal/occlusion/transparency/emission maps, property intensities, custom culling/blending/depth
 state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
