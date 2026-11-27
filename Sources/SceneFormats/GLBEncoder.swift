@@ -241,7 +241,15 @@ private struct GLBWriter {
             normalTexture["scale"] = m.normal.intensity
             result["normalTexture"] = normalTexture
         }
-        result["occlusionTexture"] = try texture(m.ambientOcclusion, attributes: attributes)
+        var occlusion = m.ambientOcclusion
+        occlusion.intensity = 1
+        if var occlusionTexture = try texture(occlusion, attributes: attributes) {
+            guard m.ambientOcclusion.intensity.isFinite, (0...1).contains(m.ambientOcclusion.intensity) else {
+                throw .malformed("Invalid occlusion texture strength", offset: nil)
+            }
+            occlusionTexture["strength"] = m.ambientOcclusion.intensity
+            result["occlusionTexture"] = occlusionTexture
+        }
         switch m.alphaMode {
         case .legacy: result["alphaMode"] = base.w < 1 ? "BLEND" : "OPAQUE"
         case .opaque: result["alphaMode"] = opacity < 1 ? "BLEND" : "OPAQUE"
