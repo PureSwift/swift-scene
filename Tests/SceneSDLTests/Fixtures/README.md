@@ -13,3 +13,5 @@ xcrun swift Tests/SceneSDLTests/Fixtures/generate-reference.swift
 ```
 
 The normal test only reads the committed files; it does not need SceneKit. SDL display tests may skip on headless machines. macOS CI sets `SCENE_REQUIRE_RENDER_TESTS=1` so unavailable graphics fails instead of silently skipping the comparison.
+
+The same generator also writes `textured.scn`, `normal-mapped.scn`, and `multi-material.scn`, with corresponding `*-apple.png` references. `quadrants.png` is an asymmetric four-color texture that exposes UV orientation mistakes; `tilted-normal.png` encodes a non-flat tangent-space normal. The material fixture assigns distinct colors to the six box faces. All three use the same camera, image size and tolerances as the original comparison. Each test additionally removes its covered feature and checks that the resulting render exceeds the error threshold, preventing an insensitive reference from passing unnoticed.
