@@ -1,7 +1,7 @@
 import SceneCore
 import SceneFormats
 
-/// Resolves direct bindings to Preview Surface constants and packaged diffuse textures.
+/// Resolves direct bindings to Preview Surface constants and packaged color textures.
 /// No arbitrary shader evaluation, external asset loading or composition is performed.
 struct USDMaterialReader {
     let stage: USDStage
@@ -74,7 +74,7 @@ struct USDMaterialReader {
         let allowed: Set<String> = ["info:id", "outputs:surface", "inputs:diffuseColor", "inputs:emissiveColor",
             "inputs:metallic", "inputs:roughness", "inputs:opacity", "inputs:opacityThreshold", "inputs:ior",
             "inputs:useSpecularWorkflow", "inputs:clearcoat", "inputs:displacement", "inputs:occlusion", "inputs:normal",
-            "inputs:diffuseColor.connect", "inputs:opacity.connect"]
+            "inputs:diffuseColor.connect", "inputs:opacity.connect", "inputs:emissiveColor.connect"]
         for property in shader.properties where !allowed.contains(property.name) {
             throw .unsupported("USD shader input or connection: \(property.name); opt into geometryOnly")
         }
@@ -113,12 +113,18 @@ struct USDMaterialReader {
         result.alphaMode = threshold > 0 ? .mask(cutoff: threshold) : (opacity < 1 ? .blend : .opaque)
         if shader[property: "inputs:diffuseColor.connect"] != nil {
             guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
-            let texture = try diffuseTexture(shader, opacity: opacity)
+            let texture = try colorTexture(shader, opacity: opacity)
             result.diffuse = texture.property
             result.diffuseFactor = texture.factor
             if texture.usesAlpha, threshold == 0 { result.alphaMode = .blend }
         } else if shader[property: "inputs:opacity.connect"] != nil {
             throw .unsupported("USD opacity texture requires a shared diffuse texture")
+        }
+        if shader[property: "inputs:emissiveColor.connect"] != nil {
+            guard ior == 1.5 else { throw .unsupported("USD textured material IOR") }
+            let texture = try colorTexture(shader, opacity: 1, isEmission: true)
+            result.emission = texture.property
+            result.emissionFactor = SIMD3(texture.factor.x, texture.factor.y, texture.factor.z)
         }
         return result
     }
