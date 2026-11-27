@@ -6,7 +6,7 @@
 )
 
 def Mesh "Triangle" (
-    apiSchemas = ["MaterialBindingAPI"]
+    prepend apiSchemas = ["MaterialBindingAPI"]
 )
 {
     int[] faceVertexCounts = [3]
