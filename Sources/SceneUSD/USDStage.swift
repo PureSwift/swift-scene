@@ -50,7 +50,8 @@ public struct USDPrim: Hashable, Sendable {
 }
 
 /// A standalone, static USDA stage containing definitions from one layer.
-/// Composition arcs, overrides/classes, variants, connections and time samples are rejected.
+/// Shading input/output connection paths are retained without evaluation.
+/// Composition arcs, overrides/classes, variants, other connections and time samples are rejected.
 /// Assets and relationship paths are retained as authored; no files are opened or resolved.
 public struct USDStage: Hashable, Sendable {
     public let metadata: [String: USDValue]

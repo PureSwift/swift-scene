@@ -78,6 +78,31 @@ import SceneFormats
         #expect(prim[property: "targets"]?.value == .array([.path("/A"), .path("../B")]))
     }
 
+    @Test func preservesShadingConnectionsWithoutEvaluatingThem() throws {
+        let stage = try parse("""
+        def Material "M" {
+            token outputs:surface.connect = </M/S.outputs:surface>
+            def Shader "S" {
+                color3f inputs:diffuseColor.connect = [</Texture.outputs:rgb>]
+                float inputs:roughness.connect = None
+            }
+        }
+        """)
+        #expect(stage.prim(at: "/M")?[property: "outputs:surface.connect"]?.value == .path("/M/S.outputs:surface"))
+        #expect(stage.prim(at: "/M/S")?[property: "inputs:diffuseColor.connect"]?.value == .array([.path("/Texture.outputs:rgb")]))
+        #expect(stage.prim(at: "/M/S")?[property: "inputs:roughness.connect"]?.value == .blocked)
+        for text in [
+            "def Shader \"S\" { float inputs:x.connect = 1 }",
+            "def Shader \"S\" { float inputs:x.connect }",
+            "def Shader \"S\" { float inputs:x.connect = [</A.x>, 1] }",
+            "def Shader \"S\" { rel outputs:x.connect = </A.x> }"
+        ] {
+            #expect(throws: SceneFormatError.self) { try parse(text) }
+        }
+        let nonShader = try parse("def Xform \"X\" { float inputs:x.connect = </A.x> }")
+        #expect(throws: SceneFormatError.self) { try USDSceneDecoder(geometryOnly: true).decodeScene(nonShader) }
+    }
+
     @Test func rejectsCompositionAndAnimationInsteadOfDroppingThem() throws {
         for text in [
             "(subLayers = [@other.usda@])", "over \"World\" {}", "class \"Base\" {}",

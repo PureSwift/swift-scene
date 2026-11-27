@@ -52,6 +52,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             throw .unsupported("USD prim type \(prim.typeName ?? "") at \(prim.path)")
         }
         for property in prim.properties {
+            if property.name.hasSuffix(".connect") { throw .unsupported("USD connections outside shading prims") }
             if property.name.hasPrefix("material:binding"), !geometryOnly {
                 throw .unsupported("USD material bindings; opt into geometryOnly")
             }
@@ -68,7 +69,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
                 throw .unsupported("USD transform on a non-Xformable prim")
             }
         }
-        let result = Node(name: prim.name)
+        let result = Node(name: try USDRead.string(prim.metadata["displayName"] ?? .string(prim.name)))
         let transform = try USDTransform.matrix(prim)
         let local: Matrix4x4
         if transform.reset {
@@ -88,6 +89,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             let material = Material()
             if let value = try USDRead.attribute(prim, "doubleSided", types: ["bool"]) { material.isDoubleSided = try USDRead.boolean(value) }
             result.geometry = Geometry(mesh: try USDMesh.make(prim), materials: [material])
+            result.geometry?.name = result.name
         }
         let world = parentWorld * local
         guard world.columnMajorElements.allSatisfy({ $0.isFinite }) else { throw USDRead.invalid("USD transform overflow") }

@@ -32,7 +32,7 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
 | `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order, parsed with [apple/swift-binary-parsing](https://github.com/apple/swift-binary-parsing)) and text, ported from Quesa — geometry, attributes, textures, lights, cameras, view hints and styles; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; `PNGDecoder` (over [PureSwift/swift-png](https://github.com/PureSwift/swift-png)) and `TextureImageLoader` for PNG/JPEG textures via [PureSwift/swift-jpeg](https://github.com/PureSwift/swift-jpeg); `GLTFDecoder` for glTF/GLB with animation and CPU skinning, `ColladaDecoder`, `SCNArchiveDecoder`, and `SceneAssetFile` for local resources and dependency tracking |
-| `SceneUSD` | Pure-Swift USDZ I/O, static USDA parsing, and polygon mesh/transform import into SceneGraph; USDC and composition remain planned |
+| `SceneUSD` | Pure-Swift USDZ I/O, static USDA parsing, polygon mesh/transform import and static triangle export; USDC and composition remain planned |
 | `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
@@ -146,7 +146,7 @@ Collada controllers, polygon holes and skew transforms are rejected; Collada ani
 skinners/morphers, custom geometry classes, embedded platform image objects, constraints, actions and effects are
 not reconstructed. SCN procedural tessellation uses SceneGraph defaults. The retained transform representation
 uses translation/rotation/scale, so arbitrary shear is not preserved. Unsupported essential geometry features
-produce errors instead of executing archived code. USD export and Vulkan remain follow-on work.
+produce errors instead of executing archived code. Vulkan remains follow-on work.
 
 PNG and JPEG decoding are pure Swift. The JPEG dependency uses `PureSwift/swift-jpeg`, pinned before its Span API
 introduced a macOS 26 deployment requirement, retaining this package's macOS 15 minimum.
@@ -168,6 +168,9 @@ swift run scene-convert --aspect-ratio 1.777778 scene.scn widescreen.glb
 swift run scene-convert --geometry-only scene.scn meshes.glb
 swift run scene-convert model.obj model.3dmf
 swift run scene-convert --geometry-only model.usdz model.glb
+swift run scene-convert --geometry-only model.3dmf model.usdz
+swift run scene-convert --geometry-only model.dae model.usda
+swift run scene-convert colored.obj colored.usdz
 ```
 
 GLB export captures the current visible pose, hierarchy (including pivots), names, mesh streams,
@@ -197,8 +200,14 @@ Animation tracks, physics and GLB backgrounds are not exported. Unsupported vert
 independent metallic/roughness textures, texture transforms/intensities, HDR emissive colors,
 front-face culling, custom blend/depth state and unresolved textures produce errors.
 Hidden branches are omitted. Skin/morph meshes are exported at their current evaluated pose.
-USD/USDZ output is not implemented. Binary 3DMF output uses the stricter color-material subset
+Binary 3DMF output uses the stricter color-material subset
 described below.
+
+USD export writes `.usda`, text `.usd`, or `.usdz` containing `scene.usda`. It preserves static
+visible hierarchy, affine transforms (including pivots), triangle geometry, normals and UV0.
+Constant materials are exported as Preview Surface shaders. Textures, cameras,
+lights and node opacity require `--geometry-only` to explicitly discard them. Other unsupported
+vertex streams are also discarded with that option; double-sided surfaces are retained.
 
 Existing outputs are protected unless `--force` is supplied; the input cannot be overwritten.
 Encoding completes before writing. New output publication requires a filesystem with hard-link
@@ -303,7 +312,7 @@ resolve assets or evaluate transforms. Traversal includes inactive authored defi
 
 The current subset requires ASCII prim/property identifiers, supports UTF-8 strings and asset paths,
 and limits combined hierarchy/value nesting to 32 levels. Composition arcs, overrides/classes,
-variants, list operations, connections, time samples, triple-delimited asset paths and uncommon
+variants, list operations, non-shading connections, time samples, triple-delimited asset paths and uncommon
 string escapes throw errors. A mesh fixture serialized by OpenUSD 26.11, malformed input tests,
 truncation tests and byte-mutation tests exercise the parser without a native USD dependency.
 
@@ -332,8 +341,35 @@ favor of default materials. Subdivision, other primvars, inherited primvars, ske
 non-default purposes and unsupported prim types throw. Both tools register the USD decoder and retain
 their import options across reloads. Viewer cameras and lights remain outside the USD unit/axis transform.
 Only the source file/package is watched; external USD references and texture loading are unsupported.
-USDC, composition, shading networks, USDA writing and USDZ output remain unimplemented.
+USDC, composition and shading network evaluation remain unimplemented.
 Apple SwiftUsd is not a dependency.
+
+`USDSceneEncoder` exports the current visible pose to deterministic USDA or a USDZ with a single
+`scene.usda` member. It authors a `Scene` default prim, Y-up coordinates and metre units. Stable
+prim identifiers avoid name collisions; original names are stored in `displayName` and restored
+by the decoder. Each submesh becomes a separate Mesh child, so reimport preserves the visual
+hierarchy rather than exact node topology. Indexed and nonindexed triangle lists/strips are
+supported; degenerate triangles are omitted. Normals and UV0 use vertex interpolation, with
+UV V converted back to USD's bottom-origin convention. Hierarchies are limited to 25 node levels.
+
+```swift
+let bytes = try USDSceneEncoder(encoding: .usdz, geometryOnly: true).encodeScene(scene)
+```
+
+The encoder emits per-submesh `MaterialBindingAPI` bindings and `UsdPreviewSurface` shaders for
+nondefault constant materials. It preserves linear diffuse/emissive colors, metallic/roughness
+constants and factors, and material alpha (opaque, blend/legacy, or positive mask thresholds).
+Legacy Phong/Blinn/Lambert surfaces become fully rough nonmetallic PBR; their ambient/specular
+terms and shininess are not retained. Unlit surfaces are approximated using emission, zero diffuse
+and IOR 1. Material names use `displayName`. Default materials need no authored shader.
+
+Textures, normal/occlusion/transparency maps, property intensities, custom culling/blending/depth
+state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
+material shading and those node properties. Shading input/output connection paths are parsed
+without evaluation: importing the resulting materials still requires `geometryOnly: true`.
+Animation tracks, skin bindings, physics and backgrounds are not serialized; deformed mesh data
+and transforms capture the current pose. Round-trip tests cover transforms, escaped names,
+submeshes, malformed geometry, deterministic bytes and safe file replacement.
 
 Library clients opt into USD file loading with per-instance registrations, without global mutable state:
 
@@ -341,5 +377,7 @@ Library clients opt into USD file loading with per-instance registrations, witho
 let decoders = USDSceneDecoder(geometryOnly: true).fileDecoders
 let asset = SceneAssetFile(url: inputURL, decoders: decoders)
 let loadedScene = try asset.load()
-try SceneAssetConverter.convert(from: inputURL, to: outputURL, decoders: decoders)
+let encoders = USDSceneEncoder(geometryOnly: true).fileEncoders
+try SceneAssetConverter.convert(from: inputURL, to: outputURL,
+                                decoders: decoders, encoders: encoders)
 ```
