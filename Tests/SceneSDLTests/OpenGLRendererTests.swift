@@ -73,4 +73,41 @@ struct OpenGLRendererTests {
         #expect(pixel(image, x: 32, y: 8) == SIMD4(255, 0, 0, 255))
         #expect(pixel(image, x: 32, y: 56) == SIMD4(0, 0, 255, 255))
     }
+    @Test func alphaModesAndTextureFactors() throws {
+        let backend = try makeBackend()
+        let texture = ImageBuffer(width: 1, height: 1, format: .rgba8, pixels: [255, 255, 255, 64])
+        var material = MaterialDescriptor.unlit(color: SIMD4(repeating: 1))
+        material.diffuse = .texture(.image(texture))
+        material.diffuseFactor = SIMD4(0, 1, 0, 1)
+        func render(_ material: MaterialDescriptor) throws -> SIMD4<UInt8> {
+            var commands = RecordedCommandBuffer(target: RenderTargetDescriptor(width: 64, height: 64, clearColor: SIMD4(1, 0, 0, 1)))
+            commands.setCamera(CameraUniforms(viewMatrix: .identity, projectionMatrix: .identity))
+            commands.drawImmediate(quad, materials: [material], transform: .identity)
+            return pixel(try backend.snapshot(commands), x: 32, y: 32)
+        }
+        material.alphaMode = .opaque
+        #expect(try render(material) == SIMD4(0, 255, 0, 255))
+        material.alphaMode = .mask(cutoff: 0.5)
+        #expect(try render(material) == SIMD4(255, 0, 0, 255))
+        material.alphaMode = .blend
+        let blend = try render(material)
+        #expect(blend.x > 180 && blend.y > 55 && blend.y < 75)
+    }
+
+    @Test func secondaryUVsAndSamplerIsolation() throws {
+        let backend = try makeBackend()
+        let image = ImageBuffer(width: 2, height: 1, format: .rgba8, pixels: [255, 0, 0, 255, 0, 255, 0, 255])
+        var mesh = quad
+        mesh.streams.append(VertexStream(semantic: .textureCoordinate(1), vectors: Array(repeating: SIMD2<Float>(1.25, 0.5), count: 4)))
+        var material = MaterialDescriptor.unlit(color: SIMD4(repeating: 1))
+        material.diffuse = MaterialProperty(.texture(.image(image)), sampler: TextureSampler(wrapS: .repeat, minificationFilter: .nearest, magnificationFilter: .nearest), mappingChannel: 1)
+        // Binding this same image on a second unit must not change the diffuse sampler.
+        material.emission = MaterialProperty(.texture(.image(image)), sampler: TextureSampler(wrapS: .clamp), mappingChannel: 1)
+        material.emissionFactor = .zero
+        var commands = RecordedCommandBuffer(target: RenderTargetDescriptor(width: 64, height: 64))
+        commands.setCamera(CameraUniforms(viewMatrix: .identity, projectionMatrix: .identity))
+        commands.drawImmediate(mesh, materials: [material], transform: .identity)
+        #expect(pixel(try backend.snapshot(commands), x: 32, y: 32) == SIMD4(255, 0, 0, 255))
+    }
+
 }
