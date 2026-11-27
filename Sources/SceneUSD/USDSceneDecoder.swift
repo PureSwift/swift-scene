@@ -3,7 +3,7 @@ import SceneFormats
 import SceneGraph
 
 /// Imports standalone static USDA (including USDA inside USDZ) into a Y-up, metre-based scene.
-/// Supports static geometry and Preview Surface materials, including packaged diffuse textures.
+/// Supports static geometry and Preview Surface materials, including packaged diffuse and emissive textures.
 public struct USDSceneDecoder: SceneAssetDecoder {
     public static let fileExtensions = ["usda", "usd", "usdz"]
 
@@ -91,8 +91,10 @@ public struct USDSceneDecoder: SceneAssetDecoder {
             let material = Material(boundMaterial ?? .default)
             if let value = try USDRead.attribute(prim, "doubleSided", types: ["bool"]) { material.isDoubleSided = try USDRead.boolean(value) }
             result.geometry = Geometry(mesh: try USDMesh.make(prim), materials: [material])
-            if case .texture = material.diffuse.contents, result.geometry?.mesh.stream(.textureCoordinate(0)) == nil {
-                throw USDRead.invalid("USD textured mesh requires primvars:st")
+            for property in [material.diffuse, material.emission] {
+                if case .texture = property.contents, result.geometry?.mesh.stream(.textureCoordinate(0)) == nil {
+                    throw USDRead.invalid("USD textured mesh requires primvars:st")
+                }
             }
             result.geometry?.name = result.name
         }
