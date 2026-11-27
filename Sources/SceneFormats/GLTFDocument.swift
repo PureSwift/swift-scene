@@ -32,6 +32,11 @@ struct GLTFDocument: Decodable {
         var metallicFactor: Float?; var roughnessFactor: Float?; var metallicRoughnessTexture: TextureInfo?
     }
     struct Material: Decodable {
+        struct Extensions: Decodable {
+            struct Unlit: Decodable {}
+            var KHR_materials_unlit: Unlit?
+        }
+        var extensions: Extensions?
         var name: String?; var pbrMetallicRoughness: PBR?; var normalTexture: TextureInfo?
         var occlusionTexture: TextureInfo?; var emissiveTexture: TextureInfo?; var emissiveFactor: [Float]?
         var alphaMode: String?; var alphaCutoff: Float?; var doubleSided: Bool?

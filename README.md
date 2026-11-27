@@ -138,12 +138,12 @@ pose while skinning continues; `scene.isPaused` pauses updates. CPU skinning pri
 throughput. The GL renderer uses approximate metallic-roughness lighting; environment IBL belongs to Phase 5.
 
 The readers are bounded implementations, not complete replacements for every vendor extension: required glTF
-extensions (including compressed geometry), additional joint sets and texture channels beyond UV1 are rejected.
+extensions other than `KHR_materials_unlit` (including compressed geometry), additional joint sets and texture channels beyond UV1 are rejected.
 Collada controllers, polygon holes and skew transforms are rejected; Collada animation is not imported. SCN
 skinners/morphers, custom geometry classes, embedded platform image objects, constraints, actions and effects are
 not reconstructed. SCN procedural tessellation uses SceneGraph defaults. The retained transform representation
 uses translation/rotation/scale, so arbitrary shear is not preserved. Unsupported essential geometry features
-produce errors instead of executing archived code. USD/GLB export and Vulkan remain follow-on work.
+produce errors instead of executing archived code. USD export and Vulkan remain follow-on work.
 
 PNG and JPEG decoding are pure Swift. The JPEG dependency uses `PureSwift/swift-jpeg`, pinned before its Span API
 introduced a macOS 26 deployment requirement, retaining this package's macOS 15 minimum.
@@ -152,6 +152,41 @@ Tests cover accessor layouts and malformed references, GLB truncation, skinning 
 coordinate conversion, SceneKit-generated archive fixtures, JPEG decoding, GPU alpha/texture sampling, inspector
 commands, orbit framing, and dependency edits/deletion/recovery. OpenGL tests require a display; physics tests run
 on Linux. The desktop viewer and snapshot path have been checked on macOS; GLES/Linux require validation there.
+
+## Converting scene files
+
+`scene-convert` loads local 3DMF, OBJ/MTL, glTF/GLB, Collada and SCN assets through
+`SceneAssetFile`, including their supported external resources:
+
+```sh
+swift run scene-convert model.obj model.glb
+swift run scene-convert --geometry-only scene.scn scene.glb
+swift run scene-convert model.obj model.3dmf
+```
+
+GLB export captures the current visible pose, hierarchy (including pivots), names, mesh streams,
+submeshes, opacity and materials. PNG/JPEG textures are embedded as lossless PNG images using
+PureSwift/swift-png. Supported inputs include UV0/UV1, normal/occlusion/emissive maps, packed shared
+metallic-roughness maps, samplers, alpha modes, PBR factors and `KHR_materials_unlit`.
+Legacy Phong/Blinn/Lambert materials are approximated as fully rough, nonmetallic PBR surfaces;
+their ambient and specular terms are not retained. Sampler anisotropy is not serialized.
+
+Animation tracks, physics and GLB backgrounds are not exported. Cameras and lights require
+`--geometry-only` to omit them explicitly. Unsupported vertex streams, separate transparency maps,
+independent metallic/roughness textures, texture transforms/intensities, HDR emissive colors,
+front-face culling, custom blend/depth state and unresolved textures produce errors.
+Hidden branches are omitted. Skin/morph meshes are exported at their current evaluated pose.
+USD/USDZ output is not implemented. Binary 3DMF output uses the stricter color-material subset
+described below.
+
+Existing outputs are protected unless `--force` is supplied; the input cannot be overwritten.
+Encoding completes before writing. New output publication requires a filesystem with hard-link
+support; replacement uses an atomic write.
+
+Library callers can use `GLBEncoder().encodeScene(scene)` or
+`SceneAssetConverter.convert(from: inputURL, to: outputURL, geometryOnly: true)`.
+GLB tests cover round trips, submeshes, texture pixels and sampling, unlit materials, invalid mesh
+data, SCN conversion, and output preservation after errors.
 
 ## Writing 3DMF files
 
