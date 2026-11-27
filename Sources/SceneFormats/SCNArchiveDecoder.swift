@@ -250,10 +250,31 @@ private final class SCNArchive {
             let color = try dictionary(source["color"])
             if let bytes = color["NSComponents"]?.data ?? color["NSRGB"]?.data ?? color["NSWhite"]?.data,
                let text = String(bytes: bytes.filter { $0 != 0 }, encoding: .utf8) {
-                let values = text.split(whereSeparator: \.isWhitespace).compactMap(Float.init)
-                guard values.allSatisfy(\.isFinite) else { throw .malformed("Invalid archived color", offset: nil) }
-                if values.count >= 3 { return .color(SIMD4(values[0], values[1], values[2], values.count > 3 ? values[3] : 1)) }
-                if let white = values.first { return .color(SIMD4(white, white, white, values.count > 1 ? values[1] : 1)) }
+                let tokens = text.split(whereSeparator: \.isWhitespace)
+                let values = tokens.compactMap(Float.init)
+                guard values.count == tokens.count, (1...4).contains(values.count), values.allSatisfy(\.isFinite) else {
+                    throw .malformed("Invalid archived color", offset: nil)
+                }
+                var rgba = values.count >= 3
+                    ? SIMD4(values[0], values[1], values[2], values.count > 3 ? values[3] : 1)
+                    : SIMD4(values[0], values[0], values[0], values.count > 1 ? values[1] : 1)
+                if color["NSComponents"] != nil {
+                    let space = try dictionary(color["NSCustomColorSpace"])
+                    // NSColor archives use NSID for older spaces and NSSpaceID for newer ones.
+                    // NSRGB is a legacy fallback in a different space; prefer tagged NSComponents.
+                    switch space["NSID"]?.number ?? space["NSSpaceID"]?.number {
+                    case 7, 14: // sRGB and extended sRGB
+                        for channel in 0..<3 {
+                            let magnitude = abs(rgba[channel])
+                            let linear = magnitude <= 0.04045 ? magnitude / 12.92
+                                : pow((magnitude + 0.055) / 1.055, 2.4)
+                            rgba[channel] = rgba[channel] < 0 ? -linear : linear
+                        }
+                    case 17: break // Extended linear sRGB is already in the renderer's working space.
+                    default: throw .unsupported("Archived custom color space")
+                    }
+                }
+                return .color(rgba)
             }
             throw .unsupported("Archived color space")
         }
