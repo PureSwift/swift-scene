@@ -146,6 +146,17 @@ private struct USDSceneWriter {
                 emissionTexture = try USDTextureExport(material.emission)
                 constants.emission = .color(SIMD4(repeating: 1))
             }
+            var packedTexture: USDTextureExport?
+            if !geometryOnly, case .texture = material.metalness.contents {
+                guard packagesTextures else { throw .unsupported("Textured USD export requires .usdz output") }
+                guard material.lightingModel == .physicallyBased, material.metalness == material.roughness else {
+                    throw .unsupported("USDZ requires a shared packed metallic-roughness texture on a PBR material")
+                }
+                guard mesh.stream(.textureCoordinate(0)) != nil else { throw USDRead.invalid("USDZ textured mesh requires UV0") }
+                packedTexture = try USDTextureExport(material.metalness)
+                constants.metalness = .scalar(1)
+                constants.roughness = .scalar(1)
+            }
             let preview = !geometryOnly && comparable != .default ? try USDPreviewMaterial(constants) : nil
             let materialPath = parentPath + "/Mesh_\(submeshIndex)/Material"
             var faces: [SIMD3<Int>] = []
@@ -198,8 +209,13 @@ private struct USDSceneWriter {
                 } else {
                     line("color3f inputs:emissiveColor = \(tuple([preview.emission.x, preview.emission.y, preview.emission.z]))", depth: shaderDepth)
                 }
-                line("float inputs:metallic = \(preview.metallic)", depth: shaderDepth)
-                line("float inputs:roughness = \(preview.roughness)", depth: shaderDepth)
+                if packedTexture != nil {
+                    line("float inputs:metallic.connect = <\(materialPath)/MetallicRoughnessTexture.outputs:b>", depth: shaderDepth)
+                    line("float inputs:roughness.connect = <\(materialPath)/MetallicRoughnessTexture.outputs:g>", depth: shaderDepth)
+                } else {
+                    line("float inputs:metallic = \(preview.metallic)", depth: shaderDepth)
+                    line("float inputs:roughness = \(preview.roughness)", depth: shaderDepth)
+                }
                 if texture != nil, material.alphaMode != .opaque {
                     line("float inputs:opacity.connect = <\(materialPath)/DiffuseTexture.outputs:a>", depth: shaderDepth)
                 } else {
@@ -217,6 +233,11 @@ private struct USDSceneWriter {
                     try textureShaders(emissionTexture, name: "EmissionTexture", scale: [preview.emission.x, preview.emission.y, preview.emission.z, 1],
                                        writeUVReader: texture == nil, materialPath: materialPath, depth: indent + 1)
                 }
+                if let packedTexture {
+                    try textureShaders(packedTexture, name: "MetallicRoughnessTexture", scale: [1, preview.roughness, preview.metallic, 1],
+                                       writeUVReader: texture == nil && emissionTexture == nil, materialPath: materialPath,
+                                       depth: indent + 1, colorSpace: "raw")
+                }
                 line("}", depth: indent)
             }
             line("}", depth: depth)
@@ -224,7 +245,7 @@ private struct USDSceneWriter {
     }
 
     private mutating func textureShaders(_ texture: USDTextureExport, name: String, scale: [Float],
-                                         writeUVReader: Bool, materialPath: String, depth: Int) throws(SceneFormatError) {
+                                         writeUVReader: Bool, materialPath: String, depth: Int, colorSpace: String = "sRGB") throws(SceneFormatError) {
         let path: String
         if let existing = imagePaths[texture.image] { path = existing }
         else {
@@ -245,13 +266,17 @@ private struct USDSceneWriter {
         line("{", depth: depth)
         line("uniform token info:id = \"UsdUVTexture\"", depth: depth + 1)
         line("asset inputs:file = @\(path)@", depth: depth + 1)
-        line("token inputs:sourceColorSpace = \"sRGB\"", depth: depth + 1)
+        line("token inputs:sourceColorSpace = \"\(colorSpace)\"", depth: depth + 1)
         line("float2 inputs:st.connect = <\(materialPath)/UVReader.outputs:result>", depth: depth + 1)
         line("token inputs:wrapS = \"\(texture.wrapS)\"", depth: depth + 1)
         line("token inputs:wrapT = \"\(texture.wrapT)\"", depth: depth + 1)
         line("float4 inputs:scale = \(tuple(scale))", depth: depth + 1)
         line("float3 outputs:rgb", depth: depth + 1)
         line("float outputs:a", depth: depth + 1)
+        if colorSpace == "raw" {
+            line("float outputs:g", depth: depth + 1)
+            line("float outputs:b", depth: depth + 1)
+        }
         line("}", depth: depth)
     }
 
