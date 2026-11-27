@@ -404,7 +404,13 @@ green channel for the latter. Image alpha is ignored. Normal maps require UV0; c
 streams, anisotropic XY strength, object-space normals and unlit normal maps remain unsupported.
 GLB conversion preserves normal strength through `normalTexture.scale`.
 
-Occlusion/transparency maps, property intensities other than normal strength, custom culling/blending/depth
+Occlusion maps round-trip through USDZ using raw red-channel sampling. Strength in 0...1
+is encoded as scale and complementary bias, preserving the renderer's interpolation from
+unoccluded to sampled occlusion. Packed ORM images are shared without changing their pixels.
+GLB conversion retains this value through `occlusionTexture.strength`. Unlit occlusion maps
+and nonstandard occlusion shader graphs remain unsupported.
+
+Transparency maps, property intensities other than normal/occlusion strength, custom culling/blending/depth
 state, node opacity, cameras and lights remain unsupported. Explicit `geometryOnly: true` drops
 material shading and those node properties. Exported constant materials can be imported without
 `geometryOnly`; arbitrary shader graphs remain unsupported. Transparent Preview Surface materials
