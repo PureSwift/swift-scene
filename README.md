@@ -12,7 +12,7 @@ one data-oriented core, with asset codecs (3DMF, OBJ, glTF, Collada, SCN, USD), 
         +-------------+--------+--------+---------+
         |             |        |                  |
     SceneSDL     SceneFormats  SceneUSD      ScenePhysics
-   (SDL3, GL)     (3DMF, …)   (SwiftUsd)       (Box3D)
+   (SDL3, GL)     (3DMF, …)   (USD/USDZ)       (Box3D)
         |             |        |                  |
         |         SceneGraph  SceneReality        |
         |             |        |                  |
@@ -32,7 +32,7 @@ side by side. Codecs read files into scenes, physics moves `EntityStore` transfo
 | `SceneGraph` | `Scene`, `Node`, `Geometry` and the built-in primitives, `QuadricSurface` (QuickDraw 3D's ellipsoids, cones, cylinders, disks and tori), `NURBSPatch` and `NURBSCurve`, `Material`, `Light`, `Camera`, `Action`, `Transaction`, `SceneRenderer`, `@NodeBuilder` |
 | `SceneReality` | The ECS surface: `World`, `Entity`, `Component`, `System` *(planned)* |
 | `SceneFormats` | `ThreeDMFDecoder`: QuickDraw 3D metafiles, binary (either byte order, parsed with [apple/swift-binary-parsing](https://github.com/apple/swift-binary-parsing)) and text, ported from Quesa — geometry, attributes, textures, lights, cameras, view hints and styles; `WavefrontOBJDecoder` and `MTLDecoder`: Wavefront OBJ and material libraries; `PNGDecoder` (over [PureSwift/swift-png](https://github.com/PureSwift/swift-png)) and `TextureImageLoader` for PNG/JPEG textures via [PureSwift/swift-jpeg](https://github.com/PureSwift/swift-jpeg); `GLTFDecoder` for glTF/GLB with animation and CPU skinning, `ColladaDecoder`, `SCNArchiveDecoder`, and `SceneAssetFile` for local resources and dependency tracking |
-| `SceneUSD` | USD stages, `.usda`, `.usdc` and `.usdz` through [apple/SwiftUsd](https://github.com/apple/SwiftUsd)'s OpenUSD, on Apple platforms *(planned)* |
+| `SceneUSD` | Pure-Swift `USDZArchive` container reader/writer; USD stages, USDA/USDC parsing and scene mapping remain planned |
 | `ScenePhysics` | `PhysicsWorld`, `PhysicsBody`, `PhysicsShape` (spheres, capsules, boxes, convex hulls, triangle meshes) and joints (hinge, slider, ball and socket, distance, weld) over [Box3D](https://github.com/erincatto/box3d); `PhysicsBodyComponent` keeps `EntityStore` transforms in step, and `Scene.physicsWorld` and `Node.makePhysicsBody` give SceneGraph SceneKit's physics; on Linux for now |
 | `SceneSDL` | `SDLRenderBackend`: an SDL3 window with an OpenGL 3.3 Core / ES 3.0 context, and `OpenGLRenderer`, which draws `SceneCore` frames in any current GL context |
 
@@ -251,3 +251,36 @@ and decode the results.
 
 The 3DMF reader is ported from [Quesa](https://github.com/jwwalker/quesa), © 1999–2021 Quesa Developers, under the
 BSD 3-Clause License in `LICENSE-Quesa`.
+
+## USD foundation
+
+`SceneUSD.USDZArchive` reads and writes the uncompressed ZIP container defined by the
+[OpenUSD USDZ specification](https://openusd.org/release/spec_usdz.html). It is pure Swift,
+uses no OpenUSD binaries or C++ interoperability, and is tested on macOS and Linux CI.
+
+```swift
+import SceneUSD
+
+let archive = try USDZArchive(entries: [
+    .init(path: "root.usda", data: Array("#usda 1.0\ndef Xform \"World\" {}\n".utf8))
+])
+let bytes = try archive.encoded()
+let loaded = try USDZArchive(bytes)
+let root = loaded.defaultLayer
+let layerBytes = loaded["root.usda"]?.data
+```
+
+Entry data uses `ArraySlice<UInt8>` views into the input archive; use each slice's `startIndex`
+or iterate it instead of assuming zero-based indices. Lookup is by exact canonical relative path.
+Physical entry order determines the optional default layer. Asset-only and empty packages are
+supported. Encoding preserves member order and bytes, with fixed timestamps and 64-byte alignment;
+ZIP comments and extra metadata are not preserved.
+
+The reader validates local/central headers, member ranges, alignment, UTF-8/ASCII names and CRC-32.
+It rejects duplicate or unsafe paths, unsupported member extensions, compression, encryption,
+ZIP64, multi-disk archives, data descriptors, preambles, and directory/symlink entries.
+It never extracts files to disk. The checked-in fixture is independently generated with Python's ZIP writer.
+
+This is package I/O only: USDA/USDC parsing, composition, scene mapping and USDZ output from
+`scene-convert` are not implemented yet. The USD implementation will remain pure Swift and
+cross-platform; Apple SwiftUsd is not a dependency.
