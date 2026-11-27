@@ -9,8 +9,13 @@ public struct USDSceneDecoder: SceneAssetDecoder {
 
     /// Explicitly discard material bindings and shading prims, using a default surface material.
     public var geometryOnly: Bool
+    /// Optional resolver for relative image assets in standalone layers. Never used for USDZ.
+    public var resourceLoader: SceneResourceLoader?
 
-    public init(geometryOnly: Bool = false) { self.geometryOnly = geometryOnly }
+    public init(geometryOnly: Bool = false, resourceLoader: SceneResourceLoader? = nil) {
+        self.geometryOnly = geometryOnly
+        self.resourceLoader = resourceLoader
+    }
 
     public func decode(_ data: [UInt8]) async throws(SceneFormatError) -> Scene {
         try decodeScene(data)
@@ -39,7 +44,7 @@ public struct USDSceneDecoder: SceneAssetDecoder {
         scene.rootNode.orientation = rotation
         scene.rootNode.scale = SIMD3(repeating: units)
         for prim in stage.rootPrims {
-            if let node = try node(prim, parentWorld: .identity, materials: USDMaterialReader(stage: stage, archive: archive), inheritedMaterial: nil) { scene.rootNode.addChild(node) }
+            if let node = try node(prim, parentWorld: .identity, materials: USDMaterialReader(stage: stage, archive: archive, resourceLoader: resourceLoader), inheritedMaterial: nil) { scene.rootNode.addChild(node) }
         }
         return scene
     }
