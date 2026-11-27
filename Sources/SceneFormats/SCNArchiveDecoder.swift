@@ -4,34 +4,89 @@ import SceneGraph
 
 /// Reads SceneKit keyed archives as data, without loading Objective-C classes or executing archive code.
 /// Supports retained nodes, mesh buffers, procedural shapes, materials, lights and cameras.
+/// SCN reference nodes load eagerly through `resourceLoader`, with resources relative to each archive.
+/// References are limited to 16 active archives and 64 active hierarchy levels; cycles are rejected.
+/// Reference overrides and non-SCN referenced formats are currently unsupported.
 public struct SCNArchiveDecoder: SceneAssetDecoder {
     public static let fileExtensions = ["scn"]
     public var resourceLoader: SceneResourceLoader?
+    /// Root archive path relative to the resource loader, used to resolve nested references.
+    public var sourcePath: String = "scene.scn"
 
     public init(resourceLoader: SceneResourceLoader? = nil) { self.resourceLoader = resourceLoader }
 
     public func decode(_ bytes: [UInt8]) async throws(SceneFormatError) -> Scene { try decodeScene(bytes) }
 
     public func decodeScene(_ bytes: [UInt8]) throws(SceneFormatError) -> Scene {
+        let context = SCNArchiveContext(loader: resourceLoader)
+        return try context.decode(bytes, path: context.path(sourcePath, relativeTo: "scene.scn"))
+    }
+}
+
+private final class SCNArchiveContext {
+    let loader: SceneResourceLoader?
+    // Bound synchronous recursion across archive boundaries as well as within each hierarchy.
+    var nodeDepth = 0
+    var active: Set<String> = []
+    var scenes: [String: Scene] = [:]
+
+    init(loader: SceneResourceLoader?) { self.loader = loader }
+
+    func path(_ reference: String, relativeTo source: String) throws(SceneFormatError) -> String {
+        guard let uri = URLComponents(string: reference), uri.scheme == nil, uri.host == nil,
+              uri.query == nil, uri.fragment == nil, let decoded = reference.removingPercentEncoding,
+              !decoded.hasPrefix("/"), let source = source.removingPercentEncoding else {
+            throw .unsupported("SCN resource must be a relative file path: \(reference)")
+        }
+        var components = source.split(separator: "/").dropLast().map(String.init)
+        for part in decoded.split(separator: "/") {
+            if part == "." { continue }
+            if part == "..", let last = components.last, last != ".." { components.removeLast() }
+            else { components.append(String(part)) }
+        }
+        // Preserve leading .. for resources outside the root archive's directory. The caller owns I/O.
+        guard let path = components.joined(separator: "/").addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
+            throw .malformed("Invalid SCN resource path", offset: nil)
+        }
+        return path
+    }
+
+    func decode(_ bytes: [UInt8], path: String) throws(SceneFormatError) -> Scene {
+        guard active.count < 16, active.insert(path).inserted else {
+            throw .malformed("Cyclic or excessively nested SCN reference: \(path)", offset: nil)
+        }
+        defer { active.remove(path) }
         var plist = BinaryPropertyList(bytes)
-        return try SCNArchive(plist.parse(), resourceLoader: resourceLoader).scene()
+        let scene = try SCNArchive(plist.parse(), context: self, path: path).scene()
+        scenes[path] = scene
+        return scene
+    }
+
+    func reference(_ path: String) throws(SceneFormatError) -> Node {
+        guard !active.contains(path) else { throw .malformed("Cyclic SCN reference: \(path)", offset: nil) }
+        let scene: Scene
+        if let cached = scenes[path] { scene = cached }
+        else { scene = try decode(GLTFStorage.resource(path, loader: loader), path: path) }
+        return scene.rootNode.clone()
     }
 }
 
 private final class SCNArchive {
     let objects: [AssetPlistValue]
     let root: AssetPlistValue
-    let resourceLoader: SceneResourceLoader?
+    let context: SCNArchiveContext
+    let path: String
     var nodes: Set<Int> = []
 
-    init(_ value: AssetPlistValue, resourceLoader: SceneResourceLoader?) throws(SceneFormatError) {
+    init(_ value: AssetPlistValue, context: SCNArchiveContext, path: String) throws(SceneFormatError) {
         guard let archive = value.dictionary, ["NSKeyedArchiver", "SCNKeyedArchiver"].contains(archive["$archiver"]?.string ?? ""),
               let objects = archive["$objects"]?.array, let root = archive["$top"]?.dictionary?["root"] else {
             throw .invalidHeader("Expected a SceneKit keyed archive")
         }
         self.objects = objects
         self.root = root
-        self.resourceLoader = resourceLoader
+        self.context = context
+        self.path = path
     }
 
     func resolve(_ value: AssetPlistValue?) throws(SceneFormatError) -> AssetPlistValue {
@@ -69,6 +124,7 @@ private final class SCNArchive {
         let value = try resolve(value)
         if let bytes = value.data { return bytes }
         if let bytes = value.dictionary?["NS.bytes"]?.data { return bytes }
+        if let bytes = value.dictionary?["NS.data"]?.data { return bytes }
         throw .malformed("Expected archived data", offset: nil)
     }
 
@@ -85,25 +141,29 @@ private final class SCNArchive {
         let source = try dictionary(root)
         let scene = Scene()
         switch try className(source) {
-        case "SCNScene": scene.rootNode.addChild(try node(source["rootNode"], depth: 0))
-        case "SCNNode": scene.rootNode.addChild(try node(root, depth: 0))
+        case "SCNScene": scene.rootNode.addChild(try node(source["rootNode"]))
+        case "SCNNode", "SCNReferenceNode": scene.rootNode.addChild(try node(root))
         default: throw .unsupported("Archive root is not a scene or node")
         }
         return scene
     }
 
-    func node(_ value: AssetPlistValue?, depth: Int) throws(SceneFormatError) -> Node {
-        guard depth < 256, case .uid(let index) = value, nodes.insert(index).inserted else {
-            throw .malformed("Cyclic or shared archived node", offset: nil)
+    func node(_ value: AssetPlistValue?) throws(SceneFormatError) -> Node {
+        guard context.nodeDepth < 64, case .uid(let index) = value, nodes.insert(index).inserted else {
+            throw .malformed("Cyclic, shared or excessively nested archived node", offset: nil)
         }
+        context.nodeDepth += 1
+        defer { context.nodeDepth -= 1 }
         let source = try dictionary(value)
-        guard try className(source) == "SCNNode" else { throw .unsupported("Archived node subclass") }
+        let kind = try className(source)
+        guard kind == "SCNNode" || kind == "SCNReferenceNode" else { throw .unsupported("Archived node subclass") }
         for key in ["skinner", "morpher"] {
             if case .null = try resolve(source[key]) {} else { throw .unsupported("SCN \(key)") }
         }
         let node = Node(name: try string(source["name"]))
         if let v = try floats(source["position"], count: 3) { node.position = SIMD3(v[0], v[1], v[2]) }
         if let v = try floats(source["scale"], count: 3) { node.scale = SIMD3(v[0], v[1], v[2]) }
+        if let v = try floats(source["rotation"], count: 4) { node.rotation = SIMD4(v[0], v[1], v[2], v[3]) }
         if let v = try floats(source["orientation"], count: 4) { node.orientation = Quaternion(ix: v[0], iy: v[1], iz: v[2], r: v[3]) }
         if let v = try floats(source["transform"], count: 16) { node.transform = Matrix4x4(columnMajor: v) }
         if let v = try floats(source["pivot"], count: 16) { node.pivot = Matrix4x4(columnMajor: v) }
@@ -113,7 +173,24 @@ private final class SCNArchive {
         if case .null = try resolve(source["geometry"]) {} else { node.geometry = try geometry(source["geometry"]) }
         if case .null = try resolve(source["camera"]) {} else { node.camera = try camera(source["camera"]) }
         if case .null = try resolve(source["light"]) {} else { node.light = try light(source["light"]) }
-        for child in try array(source["childNodes"]) { node.addChild(try self.node(child, depth: depth + 1)) }
+        if kind == "SCNReferenceNode" {
+            if case .null = try resolve(source["overrides"]) {} else { throw .unsupported("SCN reference overrides") }
+            let url = try dictionary(source["referenceURL"])
+            if case .null = try resolve(url["NS.base"]) {} else {
+                let base = try dictionary(url["NS.base"])
+                // SceneKit editor archives use file:/// as a relocation marker for sibling assets.
+                // Resolve the relative part against the containing archive, never the filesystem root.
+                guard try string(base["NS.relative"]) == "file:///",
+                      case .null = try resolve(base["NS.base"]) else { throw .unsupported("SCN reference URL base") }
+            }
+            guard let relative = try string(url["NS.relative"]), !relative.isEmpty else {
+                throw .malformed("Missing SCN reference URL", offset: nil)
+            }
+            let referencePath = try context.path(relative, relativeTo: path)
+            guard referencePath.lowercased().hasSuffix(".scn") else { throw .unsupported("SCN reference format") }
+            node.addChild(try context.reference(referencePath))
+        }
+        for child in try array(source["childNodes"]) { node.addChild(try self.node(child)) }
         return node
     }
 
@@ -285,16 +362,21 @@ private final class SCNArchive {
             guard keys.count == values.count else { throw .malformed("Invalid archived image dictionary", offset: nil) }
             for (key, value) in zip(keys, values) {
                 if try string(key) == "path", let path = try string(value) {
-                    return .texture(.image(try TextureImageLoader.decodeImage(GLTFStorage.resource(path, loader: resourceLoader))))
+                    return .texture(.image(try TextureImageLoader.decodeImage(resource(path))))
                 }
             }
             throw .unsupported("Embedded SCN image representation")
         }
         if let path = try string(source["path"]) {
-            return .texture(.image(try TextureImageLoader.decodeImage(GLTFStorage.resource(path, loader: resourceLoader))))
+            return .texture(.image(try TextureImageLoader.decodeImage(resource(path))))
         }
         if let number = source["float"]?.number ?? source["number"]?.number { return .scalar(Float(number)) }
         return nil
+    }
+
+    func resource(_ reference: String) throws(SceneFormatError) -> [UInt8] {
+        let resolved = try context.path(reference, relativeTo: path)
+        return try GLTFStorage.resource(resolved, loader: context.loader)
     }
 
     func camera(_ value: AssetPlistValue?) throws(SceneFormatError) -> Camera {
