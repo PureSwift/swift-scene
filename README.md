@@ -381,7 +381,7 @@ Independent linear color/alpha factors are applied through texture scale; emissi
 PNG rows retain their original orientation while mesh UV V is flipped for USD. Clamp, repeat,
 mirror and transparent-black border wrapping are supported. Linear min/mag filters and unit
 anisotropy are required; mip filtering is left to the consuming renderer. Standalone USDA
-texture output, unlit textures, secondary UVs and texture transforms remain unsupported.
+texture output, secondary UVs and texture transforms remain unsupported.
 USDZ import accepts these diffuse RGB/alpha and emissive RGB graphs, including PNG/JPEG package members, explicit
 sRGB color space, texture scale, zero bias, wrap modes and a direct `st` primvar reader. Image
 paths resolve relative to the default layer inside the package; no external files are opened.
@@ -389,6 +389,14 @@ Shared diffuse/opacity sampling is supported; emissive image alpha never control
 Images shared between diffuse and emissive slots are deduplicated, while samplers and factors remain independent. Constant opacity ignores image alpha, and missing
 UVs, missing/corrupt images, unsupported color spaces or other graph structures produce errors.
 Standalone USDA texture loading and additional texture slots remain unsupported.
+
+Unlit diffuse textures round-trip through USDZ using the emission-only Preview Surface
+approximation (zero diffuse, IOR 1). RGB connects to emission; blended and masked materials
+connect the same texture alpha to opacity. Color factors, diffuse intensity and inherited
+node opacity are preserved without modifying source pixels. Opaque import clears unused
+image alpha. Additional emission, normal/occlusion maps and other unlit texture combinations
+remain unsupported. Import recognizes this restricted graph and restores an unlit material,
+including `KHR_materials_unlit` when subsequently exported to GLB.
 
 Packed metallic/roughness maps also round-trip through USDZ: roughness uses green, metallic
 uses blue, and both connections share one `UsdUVTexture` in raw color space. Their independent
