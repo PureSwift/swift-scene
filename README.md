@@ -452,8 +452,17 @@ Legacy directional strength uses the same numerical mapping as GLB export.
 
 Import requires zero angle and explicitly disabled shadows. Nonzero angular extent, temperature
 controls, custom diffuse/specular contributions, filters, light linking and connected inputs
-are rejected. Ambient, point, spot and area lights remain unsupported. Geometry-only mode
+are rejected. Ambient, spot and area lights remain unsupported. Geometry-only mode
 discards directional lights while retaining their transforms and child geometry.
+
+Inverse-square point lights without a range cutoff round-trip as normalized `SphereLight`
+prims with `treatAsPoint = true`, zero radius and disabled shadows. Intensity maps numerically
+as `LightDescriptor.intensity / 1000`, following
+[OpenUSD Storm's point-source approximation](https://raw.githubusercontent.com/PixarAnimationStudios/OpenUSD/release/pxr/imaging/hdSt/light.cpp).
+This is a documented brightness approximation, not a guarantee of photometric equivalence
+across USD renderers. Import folds exposure into intensity and preserves position and color.
+Legacy distance falloff, range cutoffs, nonzero radii, shaping, shadows and unnormalized sphere
+lights are rejected. Geometry-only mode omits these lights.
 
 Inherited node opacity is baked into each exported material's constant opacity or diffuse texture
 alpha scale. Shared source materials remain unchanged. Legacy/blended surfaces multiply node
