@@ -185,6 +185,21 @@ public struct MaterialDescriptor: Hashable, Sendable {
 
     public var name: String?
 
+    /// Coverage behavior. Legacy retains the original material transparency behavior.
+    public enum AlphaMode: Hashable, Sendable {
+        case legacy
+        case opaque
+        case mask(cutoff: Float)
+        case blend
+    }
+
+    public var alphaMode: AlphaMode = .legacy
+    /// Multipliers retained separately when the material property contains a texture.
+    public var diffuseFactor = SIMD4<Float>(repeating: 1)
+    public var emissionFactor = SIMD3<Float>(repeating: 1)
+    public var metalnessFactor: Float = 1
+    public var roughnessFactor: Float = 1
+
     public var lightingModel: LightingModel
 
     /// The diffuse colour, or a physically based material's base colour.
@@ -289,6 +304,10 @@ public struct MaterialDescriptor: Hashable, Sendable {
 
     /// Whether drawing it needs blending.
     public var isTranslucent: Bool {
-        transparency < 1 || (diffuse.color.map { $0.w < 1 } ?? false) || transparent.contents != .none
+        switch alphaMode {
+        case .opaque, .mask: false
+        case .blend: true
+        case .legacy: transparency < 1 || (diffuse.color.map { $0.w < 1 } ?? false) || transparent.contents != .none
+        }
     }
 }
