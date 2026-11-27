@@ -44,10 +44,11 @@ struct OpenGLRendererTests {
         return SIMD4(image.pixels[p], image.pixels[p + 1], image.pixels[p + 2], image.pixels[p + 3])
     }
 
-    @Test func archivedSceneMatchesAppleReference() throws {
-        let sceneURL = try #require(Bundle.module.url(forResource: "comparison", withExtension: "scn", subdirectory: "Fixtures"))
-        let referenceURL = try #require(Bundle.module.url(forResource: "apple-scenekit", withExtension: "png", subdirectory: "Fixtures"))
-        let scene = try SCNArchiveDecoder().decodeScene([UInt8](Data(contentsOf: sceneURL)))
+    @Test(arguments: ["comparison", "textured", "normal-mapped", "multi-material"])
+    func archivedSceneMatchesAppleReference(_ name: String) throws {
+        let sceneURL = try #require(Bundle.module.url(forResource: name, withExtension: "scn", subdirectory: "Fixtures"))
+        let referenceURL = try #require(Bundle.module.url(forResource: name == "comparison" ? "apple-scenekit" : name + "-apple", withExtension: "png", subdirectory: "Fixtures"))
+        let scene = try SceneAssetFile(url: sceneURL).load()
         let reference = try TextureImageLoader.decodeImage([UInt8](Data(contentsOf: referenceURL)))
         let backend = try SDLRenderBackend(title: "SCN comparison", width: 1280, height: 720,
                                            sampleCount: 4, isResizable: false, isHidden: true)
@@ -67,24 +68,41 @@ struct OpenGLRendererTests {
         renderer.encode(scene, target: commands.target, into: &commands)
         let actual = try backend.snapshot(commands)
         try #require(actual.width == reference.width && actual.height == reference.height)
-        var intersection = 0, union = 0, error = 0
-        for y in 0..<actual.height {
-            for x in 0..<actual.width {
-                let a = pixel(reference, x: x, y: y), b = pixel(actual, x: x, y: y)
-                let backgroundA = pixel(reference, x: 0, y: 0), backgroundB = pixel(actual, x: 0, y: 0)
-                let foregroundA = (0..<3).contains { abs(Int(a[$0]) - Int(backgroundA[$0])) > 12 }
-                let foregroundB = (0..<3).contains { abs(Int(b[$0]) - Int(backgroundB[$0])) > 12 }
-                if foregroundA || foregroundB { union += 1 }
-                if foregroundA && foregroundB {
-                    intersection += 1
-                    for channel in 0..<3 { error += abs(Int(a[channel]) - Int(b[channel])) }
+        func metrics(_ actual: ImageBuffer) -> (coverage: Int, overlap: Double, error: Double) {
+            var intersection = 0, union = 0, error = 0
+            for y in 0..<actual.height {
+                for x in 0..<actual.width {
+                    let a = pixel(reference, x: x, y: y), b = pixel(actual, x: x, y: y)
+                    let backgroundA = pixel(reference, x: 0, y: 0), backgroundB = pixel(actual, x: 0, y: 0)
+                    let foregroundA = (0..<3).contains { abs(Int(a[$0]) - Int(backgroundA[$0])) > 12 }
+                    let foregroundB = (0..<3).contains { abs(Int(b[$0]) - Int(backgroundB[$0])) > 12 }
+                    if foregroundA || foregroundB { union += 1 }
+                    if foregroundA && foregroundB {
+                        intersection += 1
+                        for channel in 0..<3 { error += abs(Int(a[channel]) - Int(b[channel])) }
+                    }
                 }
             }
+            return (intersection, Double(intersection) / Double(max(union, 1)), Double(error) / Double(max(intersection * 3, 1)))
         }
-        // Reject empty or missing geometry as well as color regressions. Tolerate raster edge differences.
-        try #require(intersection > 10_000)
-        #expect(Double(intersection) / Double(union) > 0.98)
-        #expect(Double(error) / Double(intersection * 3) < 6)
+        let measured = metrics(actual)
+        // Reject empty geometry; permit small driver and raster-edge differences.
+        #expect(measured.coverage > 10_000)
+        #expect(measured.overlap > 0.98)
+        #expect(measured.error < 6)
+        if name != "comparison" {
+            let geometry = try #require(scene.rootNode.childNode(named: "box")?.geometry)
+            switch name {
+            case "textured": geometry.materials[0].descriptor.diffuse = .color(SIMD4(repeating: 1))
+            case "normal-mapped": geometry.materials[0].descriptor.normal = .color(SIMD4(0.5, 0.5, 1, 1))
+            default: geometry.materials = [geometry.materials[0]]
+            }
+            var omitted = try backend.beginFrame(target: commands.target)
+            renderer.encode(scene, target: omitted.target, into: &omitted)
+            // Each fixture must detect omission of the feature it covers.
+            let omissionError = metrics(try backend.snapshot(omitted)).error
+            #expect(omissionError > 6)
+        }
     }
 
     @Test func clearsToColor() throws {
