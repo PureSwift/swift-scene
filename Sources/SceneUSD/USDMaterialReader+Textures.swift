@@ -2,7 +2,7 @@ import SceneCore
 import SceneFormats
 
 extension USDMaterialReader {
-    enum TextureSlot { case diffuse, emission, metallicRoughness }
+    enum TextureSlot { case diffuse, emission, metallicRoughness, normal }
 
     /// Reads supported UV0 texture graphs. Assets stay inside the archive.
     func texture(_ surface: USDPrim, slot: TextureSlot, opacity: Float = 1) throws(SceneFormatError)
@@ -15,8 +15,9 @@ extension USDMaterialReader {
         case .diffuse: input = "inputs:diffuseColor.connect"
         case .emission: input = "inputs:emissiveColor.connect"
         case .metallicRoughness: input = "inputs:metallic.connect"
+        case .normal: input = "inputs:normal.connect"
         }
-        guard let colorConnection = try USDRead.attribute(surface, input, types: [slot == .metallicRoughness ? "float" : "color3f"]) else {
+        guard let colorConnection = try USDRead.attribute(surface, input, types: [slot == .metallicRoughness ? "float" : (slot == .normal ? "normal3f" : "color3f")]) else {
             throw USDRead.invalid("Missing USD color texture connection")
         }
         let path = try target(colorConnection)
@@ -38,19 +39,30 @@ extension USDMaterialReader {
         guard texture.properties.allSatisfy({ allowed.contains($0.name) }) else {
             throw .unsupported("USD texture graph has unsupported inputs")
         }
-        guard try USDRead.attribute(texture, "inputs:sourceColorSpace", types: ["token"]) == .string(slot == .metallicRoughness ? "raw" : "sRGB") else {
+        guard try USDRead.attribute(texture, "inputs:sourceColorSpace", types: ["token"]) == .string((slot == .metallicRoughness || slot == .normal) ? "raw" : "sRGB") else {
             throw .unsupported("USD color textures require sRGB and packed data textures require raw color space")
         }
-        if let bias = try USDRead.attribute(texture, "inputs:bias", types: ["float4"]),
-           try USDRead.tuple(bias, count: 4) != [0,0,0,0] {
-            throw .unsupported("USD texture bias")
-        }
+        let biasValues: [Float]
+        if let bias = try USDRead.attribute(texture, "inputs:bias", types: ["float4"]) {
+            biasValues = try USDRead.tuple(bias, count: 4)
+        } else { biasValues = [0,0,0,0] }
+        if slot != .normal, biasValues != [0,0,0,0] { throw .unsupported("USD texture bias") }
         let scaleValues: [Float]
         if let scale = try USDRead.attribute(texture, "inputs:scale", types: ["float4"]) {
             scaleValues = try USDRead.tuple(scale, count: 4)
         } else { scaleValues = [1,1,1,1] }
-        guard scaleValues.prefix(3).allSatisfy({ $0 >= 0 && (slot == .emission || $0 <= 1) }),
-              (0...1).contains(scaleValues[3]) else { throw USDRead.invalid("USD texture scale outside supported range") }
+        let normalStrength: Float
+        if slot == .normal {
+            normalStrength = scaleValues[0] / 2
+            guard normalStrength >= 0, abs(scaleValues[1]) == scaleValues[0], scaleValues[2] == 2,
+                  scaleValues[3] == 1, biasValues == [-normalStrength, -scaleValues[1] / 2, -1, 0] else {
+                throw .unsupported("USD normal map requires signed RGB decoding with uniform XY strength")
+            }
+        } else {
+            normalStrength = 1
+            guard scaleValues.prefix(3).allSatisfy({ $0 >= 0 && (slot == .emission || $0 <= 1) }),
+                  (0...1).contains(scaleValues[3]) else { throw USDRead.invalid("USD texture scale outside supported range") }
+        }
         guard let st = try USDRead.attribute(texture, "inputs:st.connect", types: ["float2"]) else {
             throw .unsupported("USD texture requires UV primvar connection")
         }
@@ -78,7 +90,17 @@ extension USDMaterialReader {
                 for x in 0..<image.width { image.pixels[y * image.bytesPerRow + x * 4 + 3] = 255 }
             }
         }
+        if slot == .normal, scaleValues[1] > 0 {
+            // Standard USD +Y tangent normals become -Y when UV V is converted for the engine.
+            for y in 0..<image.height {
+                for x in 0..<image.width {
+                    let offset = y * image.bytesPerRow + x * 4 + 1
+                    image.pixels[offset] = 255 - image.pixels[offset]
+                }
+            }
+        }
         var property = MaterialProperty.texture(.image(image))
+        if slot == .normal { property.intensity = normalStrength }
         property.sampler.wrapS = try wrap(texture, name: "inputs:wrapS")
         property.sampler.wrapT = try wrap(texture, name: "inputs:wrapT")
         return (property, SIMD4(scaleValues[0], scaleValues[1], scaleValues[2], alphaConnection == nil ? opacity : scaleValues[3]), alphaConnection != nil)
