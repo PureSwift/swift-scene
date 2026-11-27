@@ -150,7 +150,15 @@ private struct USDSceneWriter {
             var texture: USDTextureExport?
             if !geometryOnly, case .texture = material.diffuse.contents {
                 guard packagesTextures else { throw .unsupported("Textured USD export requires .usdz output") }
-                guard material.lightingModel != .unlit else { throw .unsupported("USDZ unlit texture export") }
+                if material.lightingModel == .unlit {
+                    // A single Preview Surface texture cannot add independent emission to sampled base color.
+                    switch material.emission.contents {
+                    case .none: break
+                    case .color(let value) where value.x == 0 && value.y == 0 && value.z == 0: break
+                    case .scalar(let value) where value == 0: break
+                    default: throw .unsupported("USDZ unlit diffuse texture with additional emission")
+                    }
+                }
                 guard mesh.stream(.textureCoordinate(0)) != nil else { throw USDRead.invalid("USDZ textured mesh requires UV0") }
                 var property = material.diffuse
                 property.intensity = 1
@@ -243,12 +251,14 @@ private struct USDSceneWriter {
                 line("{", depth: indent + 1)
                 let shaderDepth = indent + 2
                 line("uniform token info:id = \"UsdPreviewSurface\"", depth: shaderDepth)
-                if texture != nil {
+                if texture != nil, material.lightingModel != .unlit {
                     line("color3f inputs:diffuseColor.connect = <\(materialPath)/DiffuseTexture.outputs:rgb>", depth: shaderDepth)
                 } else {
                     line("color3f inputs:diffuseColor = \(tuple([preview.diffuse.x, preview.diffuse.y, preview.diffuse.z]))", depth: shaderDepth)
                 }
-                if emissionTexture != nil {
+                if texture != nil, material.lightingModel == .unlit {
+                    line("color3f inputs:emissiveColor.connect = <\(materialPath)/DiffuseTexture.outputs:rgb>", depth: shaderDepth)
+                } else if emissionTexture != nil {
                     line("color3f inputs:emissiveColor.connect = <\(materialPath)/EmissionTexture.outputs:rgb>", depth: shaderDepth)
                 } else {
                     line("color3f inputs:emissiveColor = \(tuple([preview.emission.x, preview.emission.y, preview.emission.z]))", depth: shaderDepth)
@@ -276,7 +286,8 @@ private struct USDSceneWriter {
                 line("token outputs:surface", depth: shaderDepth)
                 line("}", depth: indent + 1)
                 if let texture {
-                    try textureShaders(texture, name: "DiffuseTexture", scale: [preview.diffuse.x, preview.diffuse.y, preview.diffuse.z, preview.opacity],
+                    let color = material.lightingModel == .unlit ? preview.emission : preview.diffuse
+                    try textureShaders(texture, name: "DiffuseTexture", scale: [color.x, color.y, color.z, preview.opacity],
                                        writeUVReader: true, materialPath: materialPath, depth: indent + 1)
                 }
                 if let emissionTexture {
