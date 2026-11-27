@@ -103,7 +103,7 @@ import SceneUSD
 
     @Test func unsupportedAppearanceRequiresExplicitOptIn() throws {
         let geometry = triangle()
-        geometry.materials[0].diffuse = .color(SIMD4(1,0,0,1))
+        geometry.materials[0].diffuse = .texture(.named("unresolved"))
         let scene = Scene { Node(geometry: geometry) }
         #expect(throws: SceneFormatError.self) { try USDSceneEncoder().encodeScene(scene) }
         #expect(try !USDSceneEncoder(geometryOnly: true).encodeScene(scene).isEmpty)
@@ -114,6 +114,89 @@ import SceneUSD
         scene.rootNode.camera = Camera()
         #expect(throws: SceneFormatError.self) { try USDSceneEncoder().encodeScene(scene) }
         #expect(try !USDSceneEncoder(geometryOnly: true).encodeScene(scene).isEmpty)
+    }
+
+    @Test func previewSurfaceBindingsAndFactors() throws {
+        let geometry = triangle()
+        var material = MaterialDescriptor.physicallyBased(baseColor: SIMD4(0.8,0.4,0.2,0.5), metalness: 0.8, roughness: 0.6)
+        material.name = "Copper \"surface\""
+        material.diffuseFactor = SIMD4(0.5,1,1,1)
+        material.metalnessFactor = 0.5
+        material.roughnessFactor = 0.5
+        material.emission = .color(SIMD4(2,1,0,1))
+        material.emissionFactor = SIMD3(0.5,0.5,1)
+        material.alphaMode = .mask(cutoff: 0.25)
+        material.transparency = 0.5
+        geometry.materials[0].descriptor = material
+        var mesh = geometry.mesh
+        mesh.submeshes.append(Submesh(range: 0..<3, materialIndex: 1))
+        geometry.source = .mesh(mesh)
+        geometry.materials.append(Material())
+        geometry.materials[1].diffuse = .color(SIMD4(0,1,0,1))
+        let scene = Scene { Node(geometry: geometry) }
+        for encoding in [USDSceneEncoder.Encoding.usda, .usdz] {
+            let data = try USDSceneEncoder(encoding: encoding).encodeScene(scene)
+            let stage = encoding == .usda ? try USDStage(usda: data) : try USDStage(archive: USDZArchive(data))
+            let path = "/Scene/Root/Node_0/Mesh_0"
+            #expect(stage.prim(at: path)?.metadata["apiSchemas"] == .array([.string("MaterialBindingAPI")]))
+            #expect(stage.prim(at: path)?[property: "material:binding"]?.value == .path(path + "/Material"))
+            let surface = try #require(stage.prim(at: path + "/Material"))
+            #expect(surface.metadata["displayName"] == .string("Copper \"surface\""))
+            #expect(surface[property: "outputs:surface.connect"]?.value == .path(path + "/Material/Shader.outputs:surface"))
+            let shader = try #require(stage.prim(at: path + "/Material/Shader"))
+            #expect(shader[property: "info:id"]?.value == .string("UsdPreviewSurface"))
+            #expect(shader[property: "inputs:diffuseColor"]?.value == .tuple([.number("0.4"), .number("0.4"), .number("0.2")]))
+            #expect(shader[property: "inputs:metallic"]?.value == .number("0.4"))
+            #expect(shader[property: "inputs:roughness"]?.value == .number("0.3"))
+            #expect(shader[property: "inputs:opacity"]?.value == .number("0.25"))
+            #expect(shader[property: "inputs:opacityThreshold"]?.value == .number("0.25"))
+            #expect(shader[property: "inputs:emissiveColor"]?.value == .tuple([.number("1.0"), .number("0.5"), .number("0.0")]))
+            let second = try #require(stage.prim(at: "/Scene/Root/Node_0/Mesh_1/Material/Shader"))
+            #expect(second[property: "inputs:roughness"]?.value == .number("1.0"))
+            #expect(throws: SceneFormatError.self) { try USDSceneDecoder().decodeScene(data) }
+            #expect(try meshes(USDSceneDecoder(geometryOnly: true).decodeScene(data)).count == 2)
+        }
+        let stripped = try USDStage(usda: USDSceneEncoder(geometryOnly: true).encodeScene(scene))
+        #expect(!stripped.traverse().contains { $0.typeName == "Material" })
+    }
+
+    @Test func previewSurfaceAlphaAndUnlitApproximation() throws {
+        let geometry = triangle()
+        let scene = Scene { Node(geometry: geometry) }
+        for mode in [MaterialDescriptor.AlphaMode.opaque, .blend, .legacy] {
+            var material = MaterialDescriptor.unlit(color: SIMD4(0.25,0.5,1,0.5))
+            material.alphaMode = mode
+            geometry.materials[0].descriptor = material
+            let stage = try USDStage(usda: USDSceneEncoder().encodeScene(scene))
+            let shader = try #require(stage.prim(at: "/Scene/Root/Node_0/Mesh_0/Material/Shader"))
+            #expect(shader[property: "inputs:ior"]?.value == .number("1"))
+            #expect(shader[property: "inputs:diffuseColor"]?.value == .tuple(Array(repeating: .number("0.0"), count: 3)))
+            #expect(shader[property: "inputs:emissiveColor"]?.value == .tuple([.number("0.25"), .number("0.5"), .number("1.0")]))
+            #expect(shader[property: "inputs:opacity"]?.value == .number(mode == .opaque ? "1.0" : "0.5"))
+        }
+    }
+
+    @Test func rejectsUnsupportedAndInvalidPreviewMaterials() throws {
+        var variants: [MaterialDescriptor] = []
+        var invalid = MaterialDescriptor.default
+        invalid.diffuseFactor.x = .nan; variants.append(invalid)
+        invalid = .default; invalid.emissionFactor.x = .infinity; variants.append(invalid)
+        invalid = .default; invalid.roughness = .scalar(-1); variants.append(invalid)
+        invalid = .default; invalid.roughness = .scalar(-1); invalid.roughnessFactor = -1; variants.append(invalid)
+        invalid = .default; invalid.alphaMode = .mask(cutoff: 0); variants.append(invalid)
+        invalid = .default; invalid.alphaMode = .mask(cutoff: .nan); variants.append(invalid)
+        invalid = .default; invalid.specular = .texture(.path("specular.png")); variants.append(invalid)
+        invalid = .default; invalid.diffuse.intensity = 0.5; variants.append(invalid)
+        invalid = .default; invalid.cullMode = .front; variants.append(invalid)
+        invalid = .default; invalid.blendMode = .add; variants.append(invalid)
+        invalid = .default; invalid.writesToDepthBuffer = false; variants.append(invalid)
+        for material in variants {
+            let geometry = triangle()
+            geometry.materials[0].descriptor = material
+            #expect(throws: SceneFormatError.self) {
+                try USDSceneEncoder().encodeScene(Scene { Node(geometry: geometry) })
+            }
+        }
     }
 
     @Test func rejectsMalformedGeometryAndUnrepresentableNames() throws {
@@ -148,6 +231,7 @@ import SceneUSD
         geometry.materials[0].diffuse = .color(SIMD4(1,0,0,1))
         let scene = Scene { Node(geometry: geometry) }
         try Data(ThreeDMFEncoder().encodeScene(scene)).write(to: input)
+        func reject(_ scene: Scene) throws(SceneFormatError) -> [UInt8] { throw .unsupported("Test encoding failure") }
         for ext in ["usda", "USD", "usdz"] {
             let output = directory.appendingPathComponent("converted." + ext)
             let encoders = USDSceneEncoder(geometryOnly: true).fileEncoders
@@ -159,7 +243,7 @@ import SceneUSD
                 try SceneAssetConverter.convert(from: input, to: output, encoders: encoders)
             }
             #expect(throws: SceneFormatError.self) {
-                try SceneAssetConverter.convert(from: input, to: output, overwrite: true, encoders: USDSceneEncoder().fileEncoders)
+                try SceneAssetConverter.convert(from: input, to: output, overwrite: true, encoders: [ext.lowercased(): reject])
             }
             #expect(try Data(contentsOf: output) == original)
             try SceneAssetConverter.convert(from: input, to: output, overwrite: true, encoders: encoders)
