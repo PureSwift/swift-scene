@@ -1,0 +1,7 @@
+# Generated reference fixtures
+
+- `reference.scn`: Written by Apple's SceneKit `SCNScene.write(to:options:delegate:progressHandler:)` on macOS. Contains a parent at (1, 2, 3), a custom indexed triangle with a red material, a box of dimensions (2, 3, 4), a camera and an omni light. Exercises actual keyed-archive layout independently of the decoder.
+- `shapes.scn`: Written by SceneKit with sphere, cylinder, cone, torus, capsule and plane geometries. Each material references `checker.png` and has roughness 0.4; the test supplies JPEG bytes through the resource callback to verify signature-based decoding. The plane is 2 by 3 units.
+- `red.jpg`: An 8 by 8 solid-red RGB image, generated from a PPM and encoded with macOS `sips`. Used to verify the independent Swift JPEG decoder with lossy-color tolerance.
+
+These fixtures contain only generated geometry, materials and pixel data. They require no Apple framework at test runtime.
