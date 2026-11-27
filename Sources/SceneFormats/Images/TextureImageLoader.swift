@@ -1,7 +1,7 @@
 import SceneCore
+import JPEG
 
-/// Reads the images textures name, for a renderer's texture loader: a path's file decoded by its contents. PNG for
-/// now; other formats, and names that aren't paths, give nil.
+/// Loads PNG and JPEG textures by their file signatures using pure Swift decoders.
 public enum TextureImageLoader {
 
     public static func load(_ source: TextureSource) -> ImageBuffer? {
@@ -18,8 +18,32 @@ public enum TextureImageLoader {
 
     /// An image file's bytes, by their signature; nil for formats that aren't read.
     public static func decode(_ bytes: [UInt8]) -> ImageBuffer? {
-        if PNGDecoder.isPNG(bytes) { return try? PNGDecoder.decode(bytes) }
-        return nil
+        try? decodeImage(bytes)
+    }
+
+    public static func decodeImage(_ bytes: [UInt8]) throws(SceneFormatError) -> ImageBuffer {
+        if PNGDecoder.isPNG(bytes) { return try PNGDecoder.decode(bytes) }
+        guard bytes.starts(with: [0xff, 0xd8]) else { throw .unsupported("Unknown image format") }
+        do {
+            var stream = JPEGByteSource(bytes: bytes)
+            let image: JPEG.Data.Rectangular<JPEG.Common> = try .decompress(stream: &stream)
+            let rgb = image.unpack(as: JPEG.RGB.self)
+            let pixels = rgb.flatMap { [$0.r, $0.g, $0.b, UInt8(255)] }
+            return ImageBuffer(width: image.size.x, height: image.size.y, format: .rgba8, pixels: pixels)
+        } catch {
+            throw .malformed("JPEG: \(error)", offset: nil)
+        }
+    }
+}
+
+private struct JPEGByteSource: JPEG.Bytestream.Source {
+    let bytes: [UInt8]
+    var offset = 0
+
+    mutating func read(count: Int) -> [UInt8]? {
+        guard count >= 0, count <= bytes.count - offset else { return nil }
+        defer { offset += count }
+        return Array(bytes[offset..<offset + count])
     }
 }
 
